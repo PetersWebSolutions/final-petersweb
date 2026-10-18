@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="15" fill="#0B1424"/>
+  <rect x="3.5" y="3.5" width="57" height="57" rx="12.5" fill="none" stroke="#D9B46B" stroke-opacity=".45"/>
+  <text x="30" y="41" text-anchor="middle" font-family="Manrope, Inter, Arial, sans-serif" font-weight="800" font-size="29" letter-spacing="-1.5" fill="#D9B46B">W</text>
+  <circle cx="48" cy="44" r="3" fill="#D9B46B"/>
+</svg>
