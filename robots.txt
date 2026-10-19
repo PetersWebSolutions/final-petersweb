@@ -2,5 +2,6 @@ User-agent: *
 Allow: /
 Disallow: /data/
 Disallow: /api/
+Disallow: /admin/
 Disallow: /previews/
 

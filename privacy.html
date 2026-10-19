@@ -14,13 +14,10 @@
   <header class="site-header">
     <div class="container header__inner">
       <a class="brand" href="index.html" aria-label="PetersWeb Solutions — home">
-        <span class="brand__mark" aria-hidden="true">
-          <svg viewBox="0 0 40 40" role="presentation">
-            <text x="20" y="25.5" text-anchor="middle" font-family="Manrope, Inter, sans-serif" font-weight="800" font-size="15" letter-spacing="-0.5" fill="#D9B46B">PW</text>
-            <circle cx="30.5" cy="27.5" r="1.7" fill="#D9B46B"/>
-          </svg>
-        </span>
-        <span class="brand__text"><strong>PetersWeb</strong><span>Solutions</span></span>
+        <svg class="brand__wordmark" viewBox="0 0 140 60" aria-hidden="true" focusable="false">
+          <text class="brand__wordmark-main" x="0" y="28" textLength="128" lengthAdjust="spacingAndGlyphs"><tspan class="brand__peters">Peters</tspan><tspan class="brand__web">Web</tspan></text>
+          <text class="brand__wordmark-sub" x="0" y="42" textLength="128" lengthAdjust="spacingAndGlyphs">SOLUTIONS</text>
+        </svg>
       </a>
       <a class="btn btn--ghost btn--sm" href="index.html">Back to website</a>
     </div>
@@ -38,8 +35,8 @@
     <section class="legal-body">
       <div class="container">
         <div class="legal-meta">
-          <span>Last updated: October 18, 2026</span>
-          <span>Applies to: peterswebsolutions website and inquiry form</span>
+          <span>Last updated: October 19, 2026</span>
+          <span>Applies to: peterswebsolutions.com, the inquiry form, and project records</span>
         </div>
 
         <!-- Editor note: this is a working starter policy. Review with the business
@@ -60,7 +57,7 @@
           <li>Your email address and mobile number, both required for inquiry follow-up</li>
           <li>A short description of your project needs</li>
         </ul>
-        <p>When an inquiry is submitted, we also store the page path and browser user-agent string with the record for basic administration and troubleshooting. Please do not submit sensitive personal information, passwords, or payment details through the inquiry form.</p>
+        <p>When an inquiry is submitted, we store a reference number and the page path from which it was sent. If an inquiry becomes a project, we may also record the agreed package, agreed project price, add-ons, payment amounts and dates, project stage, domain name, the email address used for the domain, and internal project notes. Please do not submit or store passwords, payment-card or bank credentials, or email, hosting, or domain-registrar passwords in the form or admin dashboard.</p>
 
         <h2>3. How we use your information</h2>
         <p>We use the information you provide to:</p>
@@ -68,12 +65,12 @@
           <li>Respond to your inquiry and clarify your requirements</li>
           <li>Prepare a quotation or recommend a website package</li>
           <li>Communicate with you about a potential or active project</li>
-          <li>Keep a record of inquiries for follow-up and administrative purposes</li>
+          <li>Keep a record of inquiries and, where a project proceeds, manage its stage, agreed scope, domain details, and manually recorded payment amounts</li>
         </ul>
         <p>We do not sell your personal information. We do not use inquiry details for unrelated marketing messages without your consent.</p>
 
         <h2>4. Storage and retention</h2>
-        <p>Inquiry submissions are stored on the website's hosting environment and access is limited to authorized representatives of PetersWeb Solutions. We keep inquiry information only for as long as needed for the purposes described above, for legitimate business records, or as required by applicable law.</p>
+        <p>Inquiry and project records are stored in a Supabase-managed database, while the website and its API are hosted on Vercel. Access to the admin dashboard is restricted to the authorized admin account. We keep information only for as long as needed for the purposes described above, for legitimate business records, or as required by applicable law. The dashboard records payment amounts for bookkeeping; it does not process payments or store card or bank credentials.</p>
 
         <h2>5. Cookies and analytics</h2>
         <p>This website does not load an analytics provider or set advertising or analytics cookies by default. It exposes a custom conversion event for a future integration; that event can contain only a generic event name and, for package-related actions, a package code. It never includes names, contact details, website addresses, or free-text inquiry content. The Google Map is not loaded until you choose to load the interactive map. Embedded portfolio websites, Messenger, Google Maps, and other external services you choose to open are operated by third parties and governed by their own privacy policies.</p>

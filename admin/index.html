@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#101827">
+  <title>Admin Login — PetersWeb Solutions</title>
+  <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/admin.css?v=admin-pipeline-1">
+  <script defer src="../assets/js/admin.js?v=admin-pipeline-1"></script>
+</head>
+<body class="admin-page">
+  <a class="skip-link" href="#admin-main">Skip to admin content</a>
+
+  <main class="admin-root" id="admin-main">
+    <section class="login-screen" id="login-screen" aria-labelledby="login-title" hidden>
+      <a class="login-brand" href="../index.html" aria-label="PetersWeb Solutions home">
+        <span class="login-brand__main"><span>Peters</span><b>Web</b></span>
+        <span class="login-brand__sub">SOLUTIONS</span>
+      </a>
+      <div class="login-card">
+        <p class="admin-eyebrow"><span></span> Private workspace</p>
+        <h1 id="login-title">Admin Login</h1>
+        <p class="login-intro">Sign in to view client inquiries and manage project stages.</p>
+        <form id="login-form" autocomplete="on">
+          <label for="login-email">Admin email</label>
+          <input id="login-email" name="email" type="email" autocomplete="username" required maxlength="254" inputmode="email">
+          <label for="login-password">Password</label>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="1024">
+          <button class="button button--gold button--wide" type="submit" id="login-submit">Sign in securely</button>
+          <p class="form-message" id="login-message" role="status" aria-live="polite"></p>
+        </form>
+        <p class="login-footnote">This area is private. There is no public sign-up.</p>
+      </div>
+      <a class="back-site" href="../index.html">← Back to PetersWeb Solutions</a>
+    </section>
+
+    <section class="admin-shell" id="admin-shell" hidden>
+      <aside class="sidebar" aria-label="Admin navigation">
+        <a class="sidebar-brand" href="../index.html" aria-label="PetersWeb Solutions home">
+          <span class="sidebar-brand__main"><span>Peters</span><b>Web</b></span>
+          <span class="sidebar-brand__sub">SOLUTIONS</span>
+        </a>
+        <div class="sidebar-label">CLIENT PIPELINE</div>
+        <nav class="pipeline-nav" aria-label="Project stages">
+          <button class="pipeline-nav__item is-active" type="button" data-stage="inbox" aria-current="page">
+            <span class="pipeline-nav__icon" aria-hidden="true">✉</span><span class="pipeline-nav__text">Inbox</span>
+            <span class="count-badge" id="badge-inbox" aria-label="Unread inquiries">0</span>
+          </button>
+          <button class="pipeline-nav__item" type="button" data-stage="standby">
+            <span class="pipeline-nav__icon" aria-hidden="true">◷</span><span class="pipeline-nav__text">Standby Projects</span>
+            <span class="count-badge count-badge--quiet" id="badge-standby">0</span>
+          </button>
+          <button class="pipeline-nav__item" type="button" data-stage="ongoing">
+            <span class="pipeline-nav__icon" aria-hidden="true">↗</span><span class="pipeline-nav__text">On-going Projects</span>
+            <span class="count-badge count-badge--quiet" id="badge-ongoing">0</span>
+          </button>
+          <button class="pipeline-nav__item" type="button" data-stage="finished">
+            <span class="pipeline-nav__icon" aria-hidden="true">✓</span><span class="pipeline-nav__text">Finished Projects</span>
+            <span class="count-badge count-badge--quiet" id="badge-finished">0</span>
+          </button>
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="admin-identity">
+            <span class="identity-mark" aria-hidden="true">A</span>
+            <span class="identity-copy"><strong>Admin</strong><span id="signed-in-email">Signed in</span></span>
+          </div>
+          <a class="sidebar-link" href="../index.html">← View website</a>
+          <button class="sidebar-link sidebar-link--button" type="button" id="logout-button">Sign out</button>
+        </div>
+      </aside>
+
+      <div class="admin-main">
+        <header class="topbar">
+          <div>
+            <p class="admin-eyebrow"><span></span> PetersWeb Solutions</p>
+            <h1 id="stage-heading">Inbox</h1>
+            <p class="topbar-subtitle" id="stage-description">New client inquiries waiting for review.</p>
+          </div>
+          <div class="topbar-actions">
+            <button class="button button--quiet" type="button" id="refresh-button">Refresh inbox</button>
+            <button class="button button--outline mobile-signout" type="button" id="mobile-logout-button">Sign out</button>
+          </div>
+        </header>
+
+        <section class="summary-grid" aria-label="Project counts">
+          <article class="summary-card summary-card--inbox"><span>Unread inbox</span><strong id="summary-unread">0</strong><small>New inquiries to review</small></article>
+          <article class="summary-card"><span>Standby</span><strong id="summary-standby">0</strong><small>Awaiting next step</small></article>
+          <article class="summary-card"><span>On-going</span><strong id="summary-ongoing">0</strong><small>Active projects</small></article>
+          <article class="summary-card"><span>Finished</span><strong id="summary-finished">0</strong><small>Completed projects</small></article>
+        </section>
+
+        <section class="list-panel" aria-labelledby="list-title">
+          <div class="list-toolbar">
+            <div>
+              <h2 id="list-title">Inbox</h2>
+              <p id="list-count">Loading records…</p>
+            </div>
+            <label class="search-box">
+              <span class="sr-only">Search this section</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
+              <input id="search-input" type="search" placeholder="Search name or business" autocomplete="off">
+            </label>
+          </div>
+          <p class="dashboard-message" id="dashboard-message" role="status" aria-live="polite"></p>
+          <div class="record-list" id="record-list" aria-live="polite"></div>
+          <div class="empty-state" id="empty-state" hidden>
+            <span class="empty-state__icon" aria-hidden="true">✦</span>
+            <h3 id="empty-title">No new inquiries yet</h3>
+            <p id="empty-copy">New submissions from the website will appear here once the inquiry service is connected.</p>
+          </div>
+        </section>
+        <footer class="admin-footer"><span>Private client workspace</span><span>Payments are recorded manually; this dashboard does not process payments.</span></footer>
+      </div>
+    </section>
+
+    <div class="loading-screen" id="loading-screen" role="status" aria-live="polite">
+      <span class="spinner" aria-hidden="true"></span><span>Checking secure admin access…</span>
+    </div>
+  </main>
+
+  <dialog class="detail-dialog" id="detail-dialog" aria-labelledby="detail-title">
+    <div class="detail-dialog__head">
+      <div><p class="admin-eyebrow"><span></span><span id="detail-stage-label">Inquiry details</span></p><h2 id="detail-title">Client details</h2></div>
+      <button class="close-button" type="button" data-close-dialog aria-label="Close details">×</button>
+    </div>
+    <div class="detail-dialog__body" id="detail-body">
+      <section class="detail-section">
+        <div class="detail-section__heading"><div><p class="detail-kicker">Submitted through the website</p><h3>Inquiry details</h3></div><span class="reference-pill" data-detail="reference">—</span></div>
+        <dl class="detail-grid">
+          <div><dt>Full name</dt><dd data-detail="name">—</dd></div>
+          <div><dt>Business name</dt><dd data-detail="business">—</dd></div>
+          <div><dt>Business category</dt><dd data-detail="business_type">—</dd></div>
+          <div><dt>Package interest</dt><dd data-detail="package_interest">—</dd></div>
+          <div><dt>Email address</dt><dd data-detail="email">—</dd></div>
+          <div><dt>Mobile number</dt><dd data-detail="phone">—</dd></div>
+          <div class="detail-grid__full"><dt>Current website</dt><dd data-detail="current_website">—</dd></div>
+          <div class="detail-grid__full"><dt>What the client needs</dt><dd class="detail-message" data-detail="message">—</dd></div>
+          <div><dt>Received</dt><dd data-detail="created_at">—</dd></div>
+          <div><dt>Contact consent</dt><dd data-detail="consent">—</dd></div>
+        </dl>
+      </section>
+
+      <form class="project-form" id="project-form">
+        <section class="detail-section">
+          <div class="detail-section__heading"><div><p class="detail-kicker">Admin-managed fields</p><h3>Project, payments &amp; domain</h3></div></div>
+          <p class="section-help">Enter the agreed price and each payment amount. The remaining balance is calculated automatically. This does not process or verify payments.</p>
+          <div class="project-fields">
+            <label>Agreed package
+              <select name="agreed_package" id="agreed-package">
+                <option value="">Not set</option><option value="basic">Basic</option><option value="pro">Pro</option><option value="business">Business</option><option value="custom">Custom</option>
+              </select>
+            </label>
+            <label>Total agreed price (₱)
+              <input name="total_price" id="total-price" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Enter total price">
+            </label>
+            <div class="project-field-full balance-preview" id="balance-preview"><span>Balance</span><strong>Set a total price to calculate</strong></div>
+            <div class="project-field-full editor-block">
+              <div class="editor-heading"><div><h4>Add-ons</h4><p>Optional items included in the agreed project.</p></div><button class="button button--small button--outline" id="add-addon" type="button">+ Add add-on</button></div>
+              <div class="editor-list" id="addons-list"></div>
+            </div>
+            <div class="project-field-full editor-block">
+              <div class="editor-heading"><div><h4>Payments received</h4><p>Record amounts manually; do not enter card or bank credentials.</p></div><button class="button button--small button--outline" id="add-payment" type="button">+ Record payment</button></div>
+              <div class="editor-list" id="payments-list"></div>
+            </div>
+            <label>Domain name
+              <input name="domain_name" id="domain-name" type="text" maxlength="253" placeholder="clientdomain.com">
+            </label>
+            <label>Email address used for the domain
+              <input name="domain_email" id="domain-email" type="email" maxlength="254" placeholder="hello@clientdomain.com">
+            </label>
+            <label class="project-field-full">Internal notes
+              <textarea name="admin_notes" id="admin-notes" rows="3" maxlength="3000" placeholder="Notes for your team"></textarea>
+            </label>
+          </div>
+          <p class="detail-warning">Store the domain email address only. Do not store email, registrar, hosting, or payment passwords here.</p>
+        </section>
+        <div class="detail-actions">
+          <div class="stage-actions" id="stage-actions"></div>
+          <button class="button button--gold" type="submit" id="save-project-button">Save project details</button>
+        </div>
+        <p class="detail-save-message" id="detail-save-message" role="status" aria-live="polite"></p>
+      </form>
+    </div>
+  </dialog>
+</body>
+</html>
