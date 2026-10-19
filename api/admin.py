@@ -5,6 +5,7 @@ session for the single ADMIN_EMAIL configured in Vercel.
 """
 from __future__ import annotations
 
+import calendar
 import re
 import uuid
 from datetime import date, datetime, timezone
@@ -26,16 +27,26 @@ from pws_backend import (
     session_cookie_headers,
 )
 
-STAGES = {"inbox", "standby", "ongoing", "finished"}
+STAGES = {"inbox", "standby", "ongoing", "finished", "finished_monthly"}
 NEXT_STAGES = {
     "inbox": {"standby", "ongoing"},
     "standby": {"ongoing"},
-    "ongoing": {"finished"},
+    "ongoing": {"finished", "finished_monthly"},
+    "finished_monthly": {"finished"},
     "finished": set(),
 }
 PACKAGES = {"unsure", "basic", "pro", "business", "custom"}
-PAYMENT_LABELS = {"Down payment", "Installment", "Final payment", "Other"}
+PAYMENT_TYPES = {"down_payment", "installment", "final_payment", "monthly"}
+PAYMENT_SCOPES = {"project", "recurring"}
+PAYMENT_STATUSES = {"due", "paid"}
+LEGACY_PAYMENT_TYPES = {
+    "down payment": "down_payment",
+    "installment": "installment",
+    "final payment": "final_payment",
+    "other": "installment",
+}
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$")
+ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def _amount(value, allow_empty=False):
@@ -58,6 +69,36 @@ def _text(value, limit):
     return "".join(ch for ch in value if ch >= " " or ch in "\t\n\r").strip()[:limit]
 
 
+def _valid_date(value, label, required=False):
+    text = _text(value, 10)
+    if not text:
+        if required:
+            raise ValueError(f"{label} is required.")
+        return None
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        raise ValueError(f"Enter a valid {label.lower()}.")
+    try:
+        date.fromisoformat(text)
+    except ValueError:
+        raise ValueError(f"Enter a valid {label.lower()}.")
+    return text
+
+
+def _payment_type(value):
+    raw = _text(value, 40).lower().replace("-", "_").replace(" ", "_")
+    if raw in PAYMENT_TYPES:
+        return raw
+    legacy = LEGACY_PAYMENT_TYPES.get(_text(value, 40).lower())
+    return legacy or "installment"
+
+
+def _payment_id(value):
+    candidate = _text(value, 64)
+    if candidate and ID_RE.fullmatch(candidate):
+        return candidate
+    return uuid.uuid4().hex
+
+
 def _normalize_addons(value):
     if not isinstance(value, list) or len(value) > 30:
         raise ValueError("Add-ons must be a list of up to 30 items.")
@@ -73,26 +114,188 @@ def _normalize_addons(value):
 
 
 def _normalize_payments(value):
+    """Validate the new due/received schedule while accepting old UI payloads."""
     if not isinstance(value, list) or len(value) > 100:
         raise ValueError("Payments must be a list of up to 100 entries.")
     result = []
     for row in value:
         if not isinstance(row, dict):
-            continue
+            raise ValueError("Each payment must be a valid payment row.")
+        raw_type = row.get("type", row.get("label", "installment"))
+        payment_type = _payment_type(raw_type)
+        payment_id = _payment_id(row.get("id"))
+        raw_scope = _text(row.get("scope", ""), 20).lower()
+        scope = raw_scope if raw_scope in PAYMENT_SCOPES else ("recurring" if payment_type == "monthly" else "project")
+        raw_status = _text(row.get("status", ""), 16).lower()
+        if not raw_status:
+            raw_status = "paid" if row.get("date") and not row.get("due_date") else "due"
+        if raw_status not in PAYMENT_STATUSES:
+            raise ValueError("Choose Due or Paid for each payment.")
         amount = _amount(row.get("amount"))
-        label = _text(row.get("label", "Other"), 40)
-        if label not in PAYMENT_LABELS:
-            label = "Other"
-        paid_on = _text(row.get("date", ""), 10)
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", paid_on):
-            raise ValueError("Each payment needs a valid date.")
+        due_date = _valid_date(row.get("due_date", row.get("date", "")), "Next payment date", required=True)
+        received_date = _valid_date(
+            row.get("received_date", row.get("date", "") if raw_status == "paid" else ""),
+            "Received date",
+            required=(raw_status == "paid"),
+        )
+        if raw_status != "paid":
+            received_date = None
+        series_id = _text(row.get("series_id", ""), 64)
+        if series_id and not ID_RE.fullmatch(series_id):
+            series_id = ""
+        if payment_type == "monthly" and not series_id:
+            series_id = payment_id
+        generated_from = _text(row.get("generated_from", ""), 64)
+        if generated_from and not ID_RE.fullmatch(generated_from):
+            generated_from = ""
+        result.append({
+            "id": payment_id,
+            "type": payment_type,
+            "scope": scope,
+            "amount": amount,
+            "due_date": due_date,
+            "status": raw_status,
+            "received_date": received_date,
+            "series_id": series_id,
+            "generated_from": generated_from,
+        })
+    return result
+
+
+def _display_payments(value):
+    """Return canonical rows for the UI, preserving historic legacy payments."""
+    if not isinstance(value, list):
+        return []
+    result = []
+    for row in value[:100]:
+        if not isinstance(row, dict):
+            continue
         try:
-            date.fromisoformat(paid_on)
+            amount = _amount(row.get("amount"))
         except ValueError:
-            raise ValueError("Each payment needs a valid date.")
-        note = _text(row.get("note", ""), 160)
-        payment_id = _text(row.get("id", ""), 64) or uuid.uuid4().hex
-        result.append({"id": payment_id, "label": label, "amount": amount, "date": paid_on, "note": note})
+            continue
+        legacy = not any(key in row for key in ("due_date", "status", "scope", "type", "received_date"))
+        if legacy:
+            paid_date = _valid_date(row.get("date", ""), "Payment date", required=False)
+            if not paid_date:
+                continue
+            old_label = _text(row.get("label", "Installment"), 40).lower()
+            result.append({
+                "id": _payment_id(row.get("id")),
+                "type": LEGACY_PAYMENT_TYPES.get(old_label, "installment"),
+                "scope": "project",
+                "amount": amount,
+                "due_date": paid_date,
+                "status": "paid",
+                "received_date": paid_date,
+                "series_id": "",
+                "generated_from": "",
+            })
+            continue
+        try:
+            due_date = _valid_date(row.get("due_date", row.get("date", "")), "Next payment date", required=True)
+            payment_status = _text(row.get("status", "due"), 16).lower()
+            if payment_status not in PAYMENT_STATUSES:
+                payment_status = "due"
+            received_date = _valid_date(row.get("received_date", row.get("date", "") if payment_status == "paid" else ""), "Received date", required=False)
+            if payment_status == "paid" and not received_date:
+                received_date = due_date
+            if payment_status != "paid":
+                received_date = None
+        except ValueError:
+            continue
+        payment_type = _payment_type(row.get("type", row.get("label", "installment")))
+        scope = _text(row.get("scope", "project"), 20).lower()
+        if scope not in PAYMENT_SCOPES:
+            scope = "project"
+        series_id = _text(row.get("series_id", ""), 64)
+        if payment_type == "monthly" and not series_id:
+            series_id = _payment_id(row.get("id"))
+        generated_from = _text(row.get("generated_from", ""), 64)
+        result.append({
+            "id": _payment_id(row.get("id")),
+            "type": payment_type,
+            "scope": scope,
+            "amount": amount,
+            "due_date": due_date,
+            "status": payment_status,
+            "received_date": received_date,
+            "series_id": series_id,
+            "generated_from": generated_from if ID_RE.fullmatch(generated_from) else "",
+        })
+    return result
+
+
+def _paid_total(payments, scope=None):
+    total = Decimal("0")
+    for row in payments:
+        if row.get("status") != "paid" or (scope and row.get("scope") != scope):
+            continue
+        try:
+            total += Decimal(str(row.get("amount", 0)))
+        except (InvalidOperation, ValueError, TypeError):
+            continue
+    return total
+
+
+def _add_one_month(value):
+    due = date.fromisoformat(value)
+    target_month = due.month % 12 + 1
+    target_year = due.year + (1 if due.month == 12 else 0)
+    last_day = calendar.monthrange(target_year, target_month)[1]
+    return date(target_year, target_month, min(due.day, last_day)).isoformat()
+
+
+def _auto_advance_monthly(previous, submitted, total_price):
+    """Create a next-month due row only when a scheduled Monthly row is newly paid."""
+    old_by_id = {row.get("id"): row for row in previous if row.get("id")}
+    result = list(submitted)
+    newly_paid_by_series = {}
+    for row in submitted:
+        old = old_by_id.get(row.get("id"))
+        if (row.get("type") == "monthly" and row.get("status") == "paid"
+                and old and old.get("status") != "paid"):
+            series = row.get("series_id") or row.get("id")
+            current = newly_paid_by_series.get(series)
+            if current is None or row.get("due_date", "") > current.get("due_date", ""):
+                newly_paid_by_series[series] = row
+    for paid_row in newly_paid_by_series.values():
+        series = paid_row.get("series_id") or paid_row.get("id")
+        due_date = paid_row.get("due_date") or ""
+        if any(row.get("series_id") == series and row.get("status") == "due"
+               and row.get("due_date", "") >= due_date for row in result):
+            continue
+        if len(result) >= 100:
+            continue
+        next_type = "monthly"
+        next_amount = Decimal(str(paid_row.get("amount", 0)))
+        if paid_row.get("scope") == "project" and total_price is not None:
+            try:
+                total = Decimal(str(total_price))
+                remaining = total - _paid_total(result, "project")
+            except (InvalidOperation, ValueError, TypeError):
+                remaining = Decimal("0")
+            if remaining <= Decimal("0.005"):
+                continue
+            if next_amount > remaining:
+                next_amount = remaining
+            if remaining <= Decimal(str(paid_row.get("amount", 0))) + Decimal("0.005"):
+                next_type = "final_payment"
+        try:
+            next_due = _add_one_month(due_date)
+        except (ValueError, TypeError):
+            continue
+        result.append({
+            "id": uuid.uuid4().hex,
+            "type": next_type,
+            "scope": paid_row.get("scope", "project"),
+            "amount": float(next_amount.quantize(Decimal("0.01"))),
+            "due_date": next_due,
+            "status": "due",
+            "received_date": None,
+            "series_id": series,
+            "generated_from": paid_row.get("id", ""),
+        })
     return result
 
 
@@ -120,6 +323,10 @@ def _normalize_changes(payload):
         changes["payments"] = _normalize_payments(payload.get("payments"))
     if "domain_name" in payload:
         changes["domain_name"] = _text(payload.get("domain_name"), 253)
+    if "domain_provider" in payload:
+        changes["domain_provider"] = _text(payload.get("domain_provider"), 100)
+    if "domain_renewal_date" in payload:
+        changes["domain_renewal_date"] = _valid_date(payload.get("domain_renewal_date"), "Domain renewal date", required=False)
     if "domain_email" in payload:
         domain_email = _text(payload.get("domain_email"), 254)
         if domain_email and not EMAIL_RE.fullmatch(domain_email):
@@ -135,11 +342,12 @@ def _normalize_changes(payload):
 
 def _decorate(row):
     row = dict(row)
-    try:
-        paid = sum(Decimal(str(item.get("amount", 0))) for item in (row.get("payments") or []) if isinstance(item, dict))
-    except (InvalidOperation, TypeError, ValueError):
-        paid = Decimal("0")
-    row["total_paid"] = float(paid)
+    payments = _display_payments(row.get("payments"))
+    row["payments"] = payments
+    paid_project = _paid_total(payments, "project")
+    paid_all = _paid_total(payments)
+    row["total_paid"] = float(paid_project)
+    row["total_received"] = float(paid_all)
     total = row.get("total_price")
     if total is None:
         row["balance"] = None
@@ -149,9 +357,9 @@ def _decorate(row):
             total_decimal = Decimal(str(total))
         except (InvalidOperation, TypeError, ValueError):
             total_decimal = Decimal("0")
-        balance = total_decimal - paid
+        balance = total_decimal - paid_project
         row["balance"] = float(balance)
-        if paid <= 0:
+        if paid_project <= 0:
             row["payment_status"] = "Unpaid"
         elif balance > Decimal("0.005"):
             row["payment_status"] = "Partially paid"
@@ -253,7 +461,7 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 401, {"ok": False, "error": "Your session has expired. Please sign in again."}, cookie_headers)
             return
         try:
-            payload = read_json_body(self, max_bytes=24 * 1024)
+            payload = read_json_body(self, max_bytes=40 * 1024)
             inquiry_id = str(uuid.UUID(str(payload.get("id", ""))))
             raw_changes = payload.get("changes")
             if not isinstance(raw_changes, dict):
@@ -264,24 +472,54 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 400, {"ok": False, "error": message}, cookie_headers)
             return
 
-        # Enforce the requested forward-only workflow in the API, not just the UI.
-        if "stage" in changes:
+        existing = None
+        needs_existing = "stage" in changes or "payments" in changes
+        if needs_existing:
             id_filter = quote(inquiry_id, safe="")
-            status, existing = database_request(
-                f"inquiries?select=id,stage&id=eq.{id_filter}", method="GET"
+            status, existing_rows = database_request(
+                f"inquiries?select=id,stage,total_price,payments,ongoing_at,completed_at&id=eq.{id_filter}", method="GET"
             )
-            if status != 200 or not isinstance(existing, list) or not existing:
+            if status != 200 or not isinstance(existing_rows, list) or not existing_rows:
                 send_json(self, 404, {"ok": False, "error": "Inquiry not found."}, cookie_headers)
                 return
-            current_stage = existing[0].get("stage")
+            existing = existing_rows[0]
+
+        if existing and "payments" in changes:
+            old_payments = _display_payments(existing.get("payments"))
+            effective_total = changes.get("total_price", existing.get("total_price"))
+            changes["payments"] = _auto_advance_monthly(old_payments, changes["payments"], effective_total)
+
+        if existing and "stage" in changes:
+            current_stage = existing.get("stage")
             requested_stage = changes["stage"]
             if requested_stage != current_stage and requested_stage not in NEXT_STAGES.get(current_stage, set()):
                 send_json(self, 409, {"ok": False, "error": "That project stage change is not available."}, cookie_headers)
                 return
+            if requested_stage != current_stage:
+                effective_payments = changes.get("payments", _display_payments(existing.get("payments")))
+                effective_total = changes.get("total_price", existing.get("total_price"))
+                project_paid = _paid_total(effective_payments, "project")
+                due_rows = [row for row in effective_payments if row.get("status") == "due"]
+                monthly_due = [row for row in due_rows if row.get("type") == "monthly"]
+                now_text = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                if requested_stage == "finished":
+                    if effective_total is None or project_paid + Decimal("0.005") < Decimal(str(effective_total)):
+                        send_json(self, 409, {"ok": False, "error": "Finished Projects are for projects paid in full. Record the project payments and clear the balance first."}, cookie_headers)
+                        return
+                    if due_rows:
+                        send_json(self, 409, {"ok": False, "error": "There are still scheduled payments due. Clear or remove them before moving this project to Finished."}, cookie_headers)
+                        return
+                if requested_stage == "finished_monthly" and not monthly_due:
+                    send_json(self, 409, {"ok": False, "error": "Add at least one unpaid Monthly payment row before moving this project to Finished Projects with monthly payments."}, cookie_headers)
+                    return
+                if requested_stage == "ongoing" and not existing.get("ongoing_at"):
+                    changes["ongoing_at"] = now_text
+                if requested_stage in {"finished", "finished_monthly"} and not existing.get("completed_at"):
+                    changes["completed_at"] = now_text
 
-        id_filter = quote(inquiry_id, safe="")
+        inquiry_id_filter = quote(inquiry_id, safe="")
         status, updated = database_request(
-            f"inquiries?id=eq.{id_filter}",
+            f"inquiries?id=eq.{inquiry_id_filter}",
             method="PATCH",
             payload=changes,
             prefer="return=representation",
@@ -289,10 +527,7 @@ class handler(BaseHTTPRequestHandler):
         if status not in {200, 204}:
             send_json(self, 503, {"ok": False, "error": "We couldn't save those changes. Please try again."}, cookie_headers)
             return
-        if isinstance(updated, list) and updated:
-            row = _decorate(updated[0])
-        else:
-            row = None
+        row = _decorate(updated[0]) if isinstance(updated, list) and updated else None
         send_json(self, 200, {"ok": True, "inquiry": row}, cookie_headers)
 
     def do_OPTIONS(self):

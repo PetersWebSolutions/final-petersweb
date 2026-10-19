@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#101827">
   <title>Admin Login — PetersWeb Solutions</title>
   <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="../assets/css/admin.css?v=admin-pipeline-1">
-  <script defer src="../assets/js/admin.js?v=admin-pipeline-1"></script>
+  <link rel="stylesheet" href="../assets/css/admin.css?v=admin-pipeline-2">
+  <script defer src="../assets/js/admin.js?v=admin-pipeline-2"></script>
 </head>
 <body class="admin-page">
   <a class="skip-link" href="#admin-main">Skip to admin content</a>
@@ -43,7 +43,7 @@
           <span class="sidebar-brand__sub">SOLUTIONS</span>
         </a>
         <div class="sidebar-label">CLIENT PIPELINE</div>
-        <nav class="pipeline-nav" aria-label="Project stages">
+        <nav class="pipeline-nav" aria-label="Project pipeline and tools">
           <button class="pipeline-nav__item is-active" type="button" data-stage="inbox" aria-current="page">
             <span class="pipeline-nav__icon" aria-hidden="true">✉</span><span class="pipeline-nav__text">Inbox</span>
             <span class="count-badge" id="badge-inbox" aria-label="Unread inquiries">0</span>
@@ -59,6 +59,16 @@
           <button class="pipeline-nav__item" type="button" data-stage="finished">
             <span class="pipeline-nav__icon" aria-hidden="true">✓</span><span class="pipeline-nav__text">Finished Projects</span>
             <span class="count-badge count-badge--quiet" id="badge-finished">0</span>
+          </button>
+          <button class="pipeline-nav__item" type="button" data-stage="finished_monthly">
+            <span class="pipeline-nav__icon" aria-hidden="true">↻</span><span class="pipeline-nav__text">Finished Projects with monthly payments</span>
+            <span class="count-badge count-badge--quiet" id="badge-finished-monthly">0</span>
+          </button>
+          <button class="pipeline-nav__item" type="button" data-stage="search">
+            <span class="pipeline-nav__icon" aria-hidden="true">⌕</span><span class="pipeline-nav__text">Search</span>
+          </button>
+          <button class="pipeline-nav__item" type="button" data-stage="statistics">
+            <span class="pipeline-nav__icon" aria-hidden="true">▤</span><span class="pipeline-nav__text">Project Statistics</span>
           </button>
         </nav>
         <div class="sidebar-bottom">
@@ -84,33 +94,76 @@
           </div>
         </header>
 
+        <section class="renewal-alerts" id="renewal-alerts" aria-labelledby="renewal-alert-title" aria-live="polite" hidden>
+          <div class="renewal-alerts__heading">
+            <div><p class="detail-kicker">Domain reminders</p><h2 id="renewal-alert-title">Renewal due within 30 days</h2></div>
+            <span class="renewal-alerts__count" id="renewal-alert-count">0</span>
+          </div>
+          <div class="renewal-alert-list" id="renewal-alert-list"></div>
+        </section>
+
         <section class="summary-grid" aria-label="Project counts">
           <article class="summary-card summary-card--inbox"><span>Unread inbox</span><strong id="summary-unread">0</strong><small>New inquiries to review</small></article>
           <article class="summary-card"><span>Standby</span><strong id="summary-standby">0</strong><small>Awaiting next step</small></article>
           <article class="summary-card"><span>On-going</span><strong id="summary-ongoing">0</strong><small>Active projects</small></article>
-          <article class="summary-card"><span>Finished</span><strong id="summary-finished">0</strong><small>Completed projects</small></article>
+          <article class="summary-card"><span>Finished</span><strong id="summary-finished">0</strong><small>Paid in full</small></article>
+          <article class="summary-card"><span>Finished · monthly</span><strong id="summary-finished-monthly">0</strong><small>Monthly payments not yet paid</small></article>
         </section>
 
-        <section class="list-panel" aria-labelledby="list-title">
+        <section class="list-panel" id="list-panel" aria-labelledby="list-title">
           <div class="list-toolbar">
             <div>
               <h2 id="list-title">Inbox</h2>
               <p id="list-count">Loading records…</p>
             </div>
-            <label class="search-box">
-              <span class="sr-only">Search this section</span>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
-              <input id="search-input" type="search" placeholder="Search name or business" autocomplete="off">
-            </label>
+            <div class="list-toolbar__controls">
+              <label class="search-box" id="search-box">
+                <span class="sr-only" id="search-label">Search this section</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
+                <input id="search-input" type="search" placeholder="Search name or business" autocomplete="off">
+              </label>
+              <div class="search-filters" id="search-filters" hidden>
+                <label>Payment status
+                  <select id="search-payment-filter">
+                    <option value="all">Any payment status</option>
+                    <option value="paid">Paid in full</option>
+                    <option value="not_paid">Not fully paid</option>
+                  </select>
+                </label>
+                <label>Domain renewal
+                  <select id="search-renewal-filter">
+                    <option value="all">Any renewal date</option>
+                    <option value="near">Due within 30 days or overdue</option>
+                  </select>
+                </label>
+              </div>
+            </div>
           </div>
           <p class="dashboard-message" id="dashboard-message" role="status" aria-live="polite"></p>
           <div class="record-list" id="record-list" aria-live="polite"></div>
           <div class="empty-state" id="empty-state" hidden>
             <span class="empty-state__icon" aria-hidden="true">✦</span>
             <h3 id="empty-title">No new inquiries yet</h3>
-            <p id="empty-copy">New submissions from the website will appear here once the inquiry service is connected.</p>
+            <p id="empty-copy">New website inquiries will appear here as they are submitted.</p>
           </div>
         </section>
+
+        <section class="stats-panel" id="statistics-panel" aria-labelledby="statistics-title" hidden>
+          <div class="stats-panel__heading">
+            <div><p class="detail-kicker">Current calendar month</p><h2 id="statistics-title">Project Statistics</h2><p id="statistics-month">—</p></div>
+            <button class="button button--quiet" type="button" id="refresh-stats-button">Refresh statistics</button>
+          </div>
+          <p class="dashboard-message" id="statistics-message" role="status" aria-live="polite"></p>
+          <div class="statistics-grid">
+            <article class="stat-card"><span>Monthly inquiries</span><strong id="stat-inquiries">0</strong><small>Submitted this month</small></article>
+            <article class="stat-card"><span>Monthly on-going</span><strong id="stat-ongoing">0</strong><small>Moved into On-going this month</small></article>
+            <article class="stat-card"><span>Monthly finished</span><strong id="stat-finished">0</strong><small>Projects completed this month</small></article>
+            <article class="stat-card stat-card--income"><span>Total income</span><strong id="stat-income">₱0.00</strong><small>Payments received this month</small></article>
+            <article class="stat-card stat-card--receivable"><span>Monthly receivable</span><strong id="stat-receivable">₱0.00</strong><small>Unpaid payments due this month</small></article>
+          </div>
+          <p class="stats-footnote">Income counts recorded payments only. Receivables count scheduled payments due during this calendar month; the dashboard does not process or verify payments.</p>
+        </section>
+
         <footer class="admin-footer"><span>Private client workspace</span><span>Payments are recorded manually; this dashboard does not process payments.</span></footer>
       </div>
     </section>
@@ -145,30 +198,36 @@
       <form class="project-form" id="project-form">
         <section class="detail-section">
           <div class="detail-section__heading"><div><p class="detail-kicker">Admin-managed fields</p><h3>Project, payments &amp; domain</h3></div></div>
-          <p class="section-help">Enter the agreed price and each payment amount. The remaining balance is calculated automatically. This does not process or verify payments.</p>
+          <p class="section-help">Enter the agreed price and record each scheduled or received amount. Only project payments reduce the package balance. This does not process or verify payments.</p>
           <div class="project-fields">
             <label>Agreed package
               <select name="agreed_package" id="agreed-package">
                 <option value="">Not set</option><option value="basic">Basic</option><option value="pro">Pro</option><option value="business">Business</option><option value="custom">Custom</option>
               </select>
             </label>
-            <label>Total agreed price (₱)
+            <label>Total agreed project price (₱)
               <input name="total_price" id="total-price" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Enter total price">
             </label>
-            <div class="project-field-full balance-preview" id="balance-preview"><span>Balance</span><strong>Set a total price to calculate</strong></div>
+            <div class="project-field-full balance-preview" id="balance-preview"><span>Project balance</span><strong>Set a total price to calculate</strong></div>
             <div class="project-field-full editor-block">
               <div class="editor-heading"><div><h4>Add-ons</h4><p>Optional items included in the agreed project.</p></div><button class="button button--small button--outline" id="add-addon" type="button">+ Add add-on</button></div>
               <div class="editor-list" id="addons-list"></div>
             </div>
             <div class="project-field-full editor-block">
-              <div class="editor-heading"><div><h4>Payments received</h4><p>Record amounts manually; do not enter card or bank credentials.</p></div><button class="button button--small button--outline" id="add-payment" type="button">+ Record payment</button></div>
+              <div class="editor-heading"><div><h4>Payments received &amp; scheduled</h4><p>Each row tracks a due date, payment type, amount, and status. Marking a Monthly payment paid creates the next month's scheduled row; remove it to stop the series.</p></div><button class="button button--small button--outline" id="add-payment" type="button">+ Add payment</button></div>
               <div class="editor-list" id="payments-list"></div>
             </div>
             <label>Domain name
               <input name="domain_name" id="domain-name" type="text" maxlength="253" placeholder="clientdomain.com">
             </label>
-            <label>Email address used for the domain
-              <input name="domain_email" id="domain-email" type="email" maxlength="254" placeholder="hello@clientdomain.com">
+            <label>Domain provider
+              <input name="domain_provider" id="domain-provider" type="text" maxlength="100" placeholder="GoDaddy, Spaceship, Porkbun…">
+            </label>
+            <label>Domain renewal date
+              <input name="domain_renewal_date" id="domain-renewal-date" type="date">
+            </label>
+            <label>Email address used for the domain <span class="optional-label">(optional)</span>
+              <input name="domain_email" id="domain-email" type="email" maxlength="254" placeholder="Optional; add when known">
             </label>
             <label class="project-field-full">Internal notes
               <textarea name="admin_notes" id="admin-notes" rows="3" maxlength="3000" placeholder="Notes for your team"></textarea>

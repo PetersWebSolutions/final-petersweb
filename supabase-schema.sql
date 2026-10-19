@@ -1,7 +1,9 @@
 -- PetersWeb Solutions admin dashboard schema
--- Run this in Supabase Dashboard > SQL Editor after creating a project.
+-- Run this in Supabase Dashboard > SQL Editor for a fresh project.
+-- For the already-created production project, run
+-- supabase-admin-enhancements-migration.sql instead.
 -- The browser does not access this table directly. Vercel Functions use the
--- server-only service key after verifying the single configured admin login.
+-- server-only secret key after verifying the single configured admin login.
 
 create table if not exists public.inquiries (
   id uuid primary key default gen_random_uuid(),
@@ -9,7 +11,7 @@ create table if not exists public.inquiries (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   stage text not null default 'inbox'
-    check (stage in ('inbox', 'standby', 'ongoing', 'finished')),
+    check (stage in ('inbox', 'standby', 'ongoing', 'finished', 'finished_monthly')),
   is_read boolean not null default false,
 
   -- Original inquiry form fields
@@ -32,8 +34,14 @@ create table if not exists public.inquiries (
   payments jsonb not null default '[]'::jsonb
     check (jsonb_typeof(payments) = 'array'),
   domain_name text not null default '',
+  domain_provider text not null default '',
+  domain_renewal_date date,
   domain_email text not null default '',
-  admin_notes text not null default ''
+  admin_notes text not null default '',
+
+  -- Used for calendar-month project statistics; existing records are not backfilled.
+  ongoing_at timestamptz,
+  completed_at timestamptz
 );
 
 create index if not exists inquiries_stage_created_idx
@@ -41,9 +49,12 @@ create index if not exists inquiries_stage_created_idx
 create index if not exists inquiries_unread_idx
   on public.inquiries (is_read, created_at desc)
   where stage = 'inbox';
+create index if not exists inquiries_domain_renewal_idx
+  on public.inquiries (domain_renewal_date)
+  where domain_renewal_date is not null;
 
 -- Keep direct browser access closed. Admin and public form requests go through
--- Vercel Functions; the service-role key is stored only in Vercel environment
+-- Vercel Functions; the secret key is stored only in Vercel environment
 -- variables and is never sent to the browser.
 alter table public.inquiries enable row level security;
 revoke all on table public.inquiries from anon, authenticated;

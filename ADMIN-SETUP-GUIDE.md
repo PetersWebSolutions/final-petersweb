@@ -1,63 +1,62 @@
-# PetersWeb Solutions admin dashboard setup
+# PetersWeb Solutions admin dashboard setup and upgrade guide
 
-This feature adds a private dashboard to the existing Vercel site. It is not active until the Supabase project, database, admin account, and Vercel environment variables are configured.
+## Current live setup
+
+The production site is connected to Supabase and the admin dashboard has been verified live. This guide describes the dashboard and how to apply the next enhancement release safely. That release is not live until its database migration is run and its source files are uploaded to GitHub and deployed by Vercel.
 
 ## Dashboard behavior
 
 - **Admin Log In** appears only in the website footer. `/admin/` is marked `noindex` and has no public sign-up.
-- **Inbox** shows new client inquiries and an in-app badge for unread items. Opening an inquiry marks it read. The badge refreshes while the dashboard is open; no email, SMS, or push alerts are configured.
-- **Standby Projects** keeps the submitted form details and can move a record to On-going.
-- **On-going Projects** can move to Finished and includes admin-managed package, agreed total, add-ons, payment entries, balance, domain, and domain email address.
-- **Finished Projects** keeps the client and project details, payment status, remaining balance, domain, and domain email address.
-- The payment ledger records amounts entered by the admin. It does not process or verify payments. Do not enter card/bank information, email passwords, or registrar/hosting passwords.
+- **Inbox** shows new inquiries and an in-app unread badge. Opening an inquiry marks it read. The badge refreshes while the dashboard is open; there are no email, SMS, or push alerts.
+- **Standby Projects** keeps all submitted form details. **On-going Projects** includes project, payment, and domain details.
+- **Finished Projects** is for completed projects paid in full. **Finished Projects with monthly payments** is for completed projects with an unpaid Monthly payment scheduled. The dashboard does not automatically reclassify existing records.
+- **Search** filters across client records by business name, paid-in-full status, and domain renewal date due within 30 days or overdue.
+- **Project Statistics** uses the current calendar month: inquiries by submission date; On-going by date moved into that stage; finished projects by completion date (either completed stage); income by recorded receipt date; receivables by unpaid scheduled due date.
+- Domain renewals due in the next 30 days, including overdue dates, appear as an in-dashboard alert while signed in. This is not an email or SMS alarm.
+- Payment rows hold a due date, type (Down payment, Installment, Final payment, or Monthly), amount, whether the amount counts against the agreed project balance or is a separate monthly fee, Due/Paid status, and received date. Only paid project-balance entries reduce the agreed package balance; monthly income includes all recorded receipts. Marking a Monthly row paid creates the next month's due row. Remove the generated future row if that monthly series should stop.
+- The mobile number is a `tel:` link in the inquiry details. The domain email is optional. Record the provider, renewal date, and email address only—never passwords or payment-card/bank details.
 
-## Important before setup
+## Apply enhancements to the existing live project
 
-The current live site is static. Its old `server.py` only runs for local development and does not run on Vercel. Until this backend is configured and deployed, submissions from the live site will not be saved to the dashboard. Existing submissions are not imported automatically; only inquiries submitted after the Supabase-backed endpoint is live will appear.
+The existing Supabase table, admin user, and Vercel environment variables are already configured. **Do these steps in order.** They preserve current records and do not reclassify the existing Finished project.
 
-## 1. Create a Supabase project
+### 1. Run the database migration first
 
-1. Sign in to Supabase and create a new project under your account.
-2. Choose a strong database password and store it safely; it is not needed in this site’s Vercel environment variables.
-3. Choose the closest available region to your clients.
+1. Open the Supabase project and choose **SQL Editor → New query**.
+2. Open `supabase-admin-enhancements-migration.sql` from the updated source package and copy its full contents into the query.
+3. Click **Run**. A successful result may say “Success. No rows returned.”
+4. This adds optional domain provider/renewal fields, stage support, and timestamps used by statistics. It does not delete or move existing records. Stage dates are not guessed or backfilled, so monthly stage statistics start accumulating after this migration.
 
-## 2. Create the database table
+Do not run the fresh-project `supabase-schema.sql` over this already-configured project; use the migration file above.
 
-1. Open the Supabase project.
-2. Choose **SQL Editor** and start a new query.
-3. Open `supabase-schema.sql` from this source package, copy its contents, and paste them into the SQL Editor.
-4. Run the query. It creates the `inquiries` table, enables Row Level Security, and grants direct browser roles no access to client records.
+### 2. Upload the updated source to GitHub
 
-## 3. Create the one admin login
+1. Extract the updated source ZIP on your computer.
+2. In the connected GitHub repository, choose **Add file → Upload files**.
+3. Upload the extracted files and folders to the repository root, preserving their folder structure; do not upload the ZIP as a single file.
+4. Commit the upload to `main`. Vercel will start a Production deployment. The current Supabase environment variables should remain in Vercel and do not need to be re-entered.
+5. Wait for the deployment to show **Ready**, then open `https://www.peterswebsolutions.com/admin/` and sign in.
 
-1. In Supabase, open **Authentication → Users**.
-2. Add/invite the one admin user using the email that will be set as `ADMIN_EMAIL` in Vercel.
-3. Set a strong unique password using Supabase’s account flow. Never put the password in this repository or send it in chat.
-4. Keep public sign-ups disabled. Only the admin account should be able to sign in.
+### 3. Verify
 
-## 4. Add server-only Supabase settings in Vercel
+1. Confirm the added Monthly, Search, and Project Statistics navigation items are present.
+2. Test an inquiry submission and confirm it appears in Inbox.
+3. In an existing or test project, save a domain provider/date and verify the renewal reminder appears when the date is within 30 days. Use an optional domain email or leave it blank.
+4. Test payment rows with non-sensitive amounts only. Do not use real payment credentials. Confirm a paid Monthly row creates a next-month due row and that the statistics reflect the receipt/due date.
 
-In Vercel, open the `project-e7yjm` project, then **Settings → Environment Variables**. Add these for **Production**:
+## Fresh-project setup reference
 
-| Variable | Value |
-|---|---|
-| `SUPABASE_URL` | The project URL from Supabase’s **Connect** or API settings |
-| `SUPABASE_PUBLISHABLE_KEY` | The Supabase publishable key (`sb_publishable_...`) |
-| `SUPABASE_SECRET_KEY` | The Supabase secret key (`sb_secret_...`) — server-side only |
-| `ADMIN_EMAIL` | The exact email for the single admin account |
+For a brand-new Supabase project only:
 
-The code also accepts Supabase’s legacy `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` variable names if those are the keys your project provides. The secret/service-role key must stay in Vercel’s server-side environment variables; never add it to HTML, JavaScript, GitHub, or a public `.env` file.
-
-## 5. Deploy and verify
-
-1. Commit/upload the updated source to the connected GitHub repository. Vercel will deploy the `/api` Python functions from the project root; keep Framework Preset **Other**, root directory `./`, and the build command blank.
-2. Wait for the deployment to show **Ready**.
-3. Open the site footer and choose **Admin Log In**. Sign in with the admin account created in Supabase.
-4. Confirm the dashboard opens. Then submit a controlled test inquiry and verify it appears in Inbox. If you need to remove test data, use Supabase **Table Editor → inquiries**; deletion is not a public website feature.
+1. Run `supabase-schema.sql` in Supabase **SQL Editor**.
+2. Create the single admin account under **Authentication → Users**; keep public sign-ups disabled.
+3. In Vercel **Settings → Environment Variables**, configure Production values for `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, and `ADMIN_EMAIL`.
+4. Keep the secret/service-role key server-side in Vercel. Never place secrets in HTML, JavaScript, GitHub, or chat. The code accepts the legacy `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` names as an alternative.
 
 ## Security and privacy notes
 
-- The browser never receives the Supabase secret/service-role key. Private dashboard API calls require a signed-in Supabase Auth session for the configured admin email.
-- Client records include names, email addresses, mobile numbers, inquiry text, and, when managed as projects, package/payment/domain details. Review the updated Privacy Policy before launch and confirm it accurately describes the business’s actual retention and practices.
-- The dashboard stores the domain email address only, not its password. Payment entries are manual bookkeeping only.
-- The Inbox badge is in-app only. No email or text notification integration is included.
+- The browser never receives the Supabase secret/service-role key. Private dashboard API calls require a Supabase Auth session for the configured admin email.
+- Client records include names, email addresses, mobile numbers, inquiry text, and, when managed as projects, package/payment details and domain provider, renewal date, name, and email address.
+- Payment records are manual bookkeeping only; the dashboard does not process or verify payments. Never enter card/bank details, email passwords, or registrar/hosting passwords.
+- Renewal reminders and the Inbox badge are in-app only. No email or text notification integration is included.
+- Review the updated Privacy Policy and confirm it accurately describes the business's actual retention and practices.
