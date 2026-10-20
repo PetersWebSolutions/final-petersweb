@@ -1,54 +1,61 @@
 # PetersWeb Solutions admin dashboard setup and upgrade guide
 
-## Current live setup
+## Current production status
 
-The production site is connected to Supabase and the admin dashboard has been verified live. This guide describes the dashboard and how to apply the next enhancement release safely. That release is not live until its database migration is run and its source files are uploaded to GitHub and deployed by Vercel.
+The first-wave admin enhancements have been uploaded to GitHub and Vercel reported the latest `main` deployment as **Ready / Production**. The first-wave Supabase migration has already been run successfully. The second-wave features below are **not live** until the separate expense migration is run and the updated source is uploaded and deployed.
 
-## Dashboard behavior
+The second-wave release preserves existing inquiries and stages. It does not automatically move the existing Finished project or alter its payment schedule.
 
-- **Admin Log In** appears only in the website footer. `/admin/` is marked `noindex` and has no public sign-up.
-- **Inbox** shows new inquiries and an in-app unread badge. Opening an inquiry marks it read. The badge refreshes while the dashboard is open; there are no email, SMS, or push alerts.
-- **Standby Projects** keeps all submitted form details. **On-going Projects** includes project, payment, and domain details.
-- **Finished Projects** is for completed projects paid in full. **Finished Projects with monthly payments** is for completed projects with an unpaid Monthly payment scheduled. The dashboard does not automatically reclassify existing records.
-- **Search** filters across client records by business name, paid-in-full status, and domain renewal date due within 30 days or overdue.
-- **Project Statistics** uses the current calendar month: inquiries by submission date; On-going by date moved into that stage; finished projects by completion date (either completed stage); income by recorded receipt date; receivables by unpaid scheduled due date.
-- Domain renewals due in the next 30 days, including overdue dates, appear as an in-dashboard alert while signed in. This is not an email or SMS alarm.
-- Payment rows hold a due date, type (Down payment, Installment, Final payment, or Monthly), amount, whether the amount counts against the agreed project balance or is a separate monthly fee, Due/Paid status, and received date. Only paid project-balance entries reduce the agreed package balance; monthly income includes all recorded receipts. Marking a Monthly row paid creates the next month's due row. Remove the generated future row if that monthly series should stop.
-- The mobile number is a `tel:` link in the inquiry details. The domain email is optional. Record the provider, renewal date, and email address only—never passwords or payment-card/bank details.
+## Second-wave dashboard behavior
 
-## Apply enhancements to the existing live project
+- **Finished Projects → Finished Projects with monthly payments:** a completed project can be moved to the monthly-payment destination when it has at least one unpaid Monthly payment row. The destination is for completed projects with a Monthly amount still due. To return a fully paid project to Finished, clear or remove due scheduled payments first.
+- **Permanent deletion:** each client/project row has a Delete action. The confirmation names the record, explains that the deletion cannot be undone, and offers **Yes, delete permanently** or **Cancel**. Deleting a client/project removes its inquiry, payment schedule, domain details, and admin notes. Any linked expense entries remain in Monthly Expenses and are unlinked from the deleted project. Expense entries have their own permanent-delete confirmation; deleting one recurring month does not delete other months in its series.
+- **Monthly Expenses:** add dated one-time ledger entries or recurring monthly bills. Each entry has a description, category, amount, due/expense date, Paid/Unpaid status, and optional link to a client/project. Marking a recurring monthly bill Paid creates the next month's Unpaid row. Delete that future row to stop the series. Expense rows are dated by their due/expense date; Paid/Unpaid status does not change which month they count in.
+- **Project Statistics:** current-month cards are retained, and the all-available-months comparison table includes income, receivables, profit, expenses, inquiry count, and finished-project count. It includes months with recorded history and scheduled future due dates.
+  - Income = project payments actually received in that month.
+  - Receivables = unpaid scheduled project payments due in that month.
+  - Expenses = all expense rows dated in that month, including Unpaid entries.
+  - Profit = income minus those recorded expenses.
+  - Inquiries = submissions received in that month.
+  - Finished projects = projects completed in that month, where a completion date is recorded. Historical dates are not guessed or backfilled.
+- Domain renewal reminders remain in-dashboard only. The dashboard does not send email, SMS, or push notifications and does not process or verify payments.
 
-The existing Supabase table, admin user, and Vercel environment variables are already configured. **Do these steps in order.** They preserve current records and do not reclassify the existing Finished project.
+## Apply the second-wave upgrade to the existing live project
 
-### 1. Run the database migration first
+The Supabase project, admin user, Vercel variables, and first-wave migration are already configured. **Do these steps in order.** No Bash or command-line steps are needed.
+
+### 1. Run the new expenses migration first
 
 1. Open the Supabase project and choose **SQL Editor → New query**.
-2. Open `supabase-admin-enhancements-migration.sql` from the updated source package and copy its full contents into the query.
-3. Click **Run**. A successful result may say “Success. No rows returned.”
-4. This adds optional domain provider/renewal fields, stage support, and timestamps used by statistics. It does not delete or move existing records. Stage dates are not guessed or backfilled, so monthly stage statistics start accumulating after this migration.
+2. Open `supabase-expenses-migration.sql` from the updated source package.
+3. Copy the full contents into the SQL Editor and click **Run**.
+4. A successful result may say **“Success. No rows returned.”**
 
-Do not run the fresh-project `supabase-schema.sql` over this already-configured project; use the migration file above.
+Run this new migration only once. **Do not rerun** `supabase-admin-enhancements-migration.sql`, and do not run the fresh-project `supabase-schema.sql` over the existing production database. The new migration creates private expense storage and leaves all existing project records and stages unchanged.
 
 ### 2. Upload the updated source to GitHub
 
-1. Extract the updated source ZIP on your computer.
+1. Download and extract the updated source ZIP.
 2. In the connected GitHub repository, choose **Add file → Upload files**.
-3. Upload the extracted files and folders to the repository root, preserving their folder structure; do not upload the ZIP as a single file.
-4. Commit the upload to `main`. Vercel will start a Production deployment. The current Supabase environment variables should remain in Vercel and do not need to be re-entered.
-5. Wait for the deployment to show **Ready**, then open `https://www.peterswebsolutions.com/admin/` and sign in.
+3. Upload the extracted files and folders to the repository root, preserving their folder structure. Do not upload the ZIP as a single file.
+4. Commit the upload to `main`. Vercel should start a Production deployment. The current Supabase environment variables should remain in Vercel and do not need to be re-entered.
+5. Wait for Vercel to show **Ready**, then open `https://www.peterswebsolutions.com/admin/` and sign in.
 
-### 3. Verify
+### 3. Verify safely
 
-1. Confirm the added Monthly, Search, and Project Statistics navigation items are present.
-2. Test an inquiry submission and confirm it appears in Inbox.
-3. In an existing or test project, save a domain provider/date and verify the renewal reminder appears when the date is within 30 days. Use an optional domain email or leave it blank.
-4. Test payment rows with non-sensitive amounts only. Do not use real payment credentials. Confirm a paid Monthly row creates a next-month due row and that the statistics reflect the receipt/due date.
+1. Confirm the **Monthly Expenses** navigation and the all-month comparison table are present.
+2. Add a small test one-time expense. Confirm it appears in the ledger and in the matching month's Expenses and Profit figures. Delete the test entry if appropriate.
+3. Create a test recurring monthly bill with a due date and amount. Mark it Paid and confirm the next month's Unpaid row appears. Delete that future row if you do not want to keep the test series.
+4. Optionally link a test expense to a project and verify the project name appears. Deleting a client/project keeps its expense entries but removes the project link.
+5. For a safe stage-transfer test, use a test project and add an unpaid Monthly payment row before moving it from Finished to Finished Projects with monthly payments. Do not alter the existing Finished project unless you intend to.
+6. Test permanent deletion only with a disposable test inquiry/project. A confirmed deletion cannot be undone.
+7. Check the statistics for a month with known entries. Expenses count in their due/expense month even if still Unpaid; profit equals received income minus all expense entries dated in that month.
 
 ## Fresh-project setup reference
 
 For a brand-new Supabase project only:
 
-1. Run `supabase-schema.sql` in Supabase **SQL Editor**.
+1. Run `supabase-schema.sql` in Supabase **SQL Editor**. It now includes the private expenses table as well as inquiries.
 2. Create the single admin account under **Authentication → Users**; keep public sign-ups disabled.
 3. In Vercel **Settings → Environment Variables**, configure Production values for `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, and `ADMIN_EMAIL`.
 4. Keep the secret/service-role key server-side in Vercel. Never place secrets in HTML, JavaScript, GitHub, or chat. The code accepts the legacy `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` names as an alternative.
@@ -56,7 +63,7 @@ For a brand-new Supabase project only:
 ## Security and privacy notes
 
 - The browser never receives the Supabase secret/service-role key. Private dashboard API calls require a Supabase Auth session for the configured admin email.
-- Client records include names, email addresses, mobile numbers, inquiry text, and, when managed as projects, package/payment details and domain provider, renewal date, name, and email address.
-- Payment records are manual bookkeeping only; the dashboard does not process or verify payments. Never enter card/bank details, email passwords, or registrar/hosting passwords.
+- Client records include names, email addresses, mobile numbers, inquiry text, and, when managed as projects, package/payment details and domain provider, renewal date, name, and email address. Expense records include descriptions, categories, amounts, dates, status, and an optional project link.
+- Payment and expense records are manual bookkeeping only; the dashboard does not process or verify payments. Never enter card/bank details, email passwords, or registrar/hosting passwords.
 - Renewal reminders and the Inbox badge are in-app only. No email or text notification integration is included.
-- Review the updated Privacy Policy and confirm it accurately describes the business's actual retention and practices.
+- Review the Privacy Policy and confirm it accurately describes the business's actual retention and practices.

@@ -33,12 +33,14 @@ NEXT_STAGES = {
     "standby": {"ongoing"},
     "ongoing": {"finished", "finished_monthly"},
     "finished_monthly": {"finished"},
-    "finished": set(),
+    "finished": {"finished_monthly"},
 }
 PACKAGES = {"unsure", "basic", "pro", "business", "custom"}
 PAYMENT_TYPES = {"down_payment", "installment", "final_payment", "monthly"}
 PAYMENT_SCOPES = {"project", "recurring"}
 PAYMENT_STATUSES = {"due", "paid"}
+EXPENSE_TYPES = {"one_time", "monthly"}
+EXPENSE_STATUSES = {"due", "paid"}
 LEGACY_PAYMENT_TYPES = {
     "down payment": "down_payment",
     "installment": "installment",
@@ -368,6 +370,93 @@ def _decorate(row):
     return row
 
 
+def _normalize_expense(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("Enter valid expense details.")
+    description = _text(payload.get("description"), 160)
+    if not description:
+        raise ValueError("Enter an expense description.")
+    category = _text(payload.get("category", ""), 80)
+    amount = _amount(payload.get("amount"))
+    expense_date = _valid_date(payload.get("expense_date"), "Due / expense date", required=True)
+    expense_type = _text(payload.get("expense_type", "one_time"), 20).lower()
+    if expense_type not in EXPENSE_TYPES:
+        raise ValueError("Choose a valid expense type.")
+    status = _text(payload.get("status", "due"), 16).lower()
+    if status not in EXPENSE_STATUSES:
+        raise ValueError("Choose Paid or Unpaid for the expense status.")
+    if status == "paid":
+        paid_date = _valid_date(payload.get("paid_date") or expense_date, "Date paid", required=True)
+    else:
+        paid_date = None
+    inquiry_id = None
+    raw_inquiry_id = _text(payload.get("inquiry_id", ""), 64)
+    if raw_inquiry_id:
+        try:
+            inquiry_id = str(uuid.UUID(raw_inquiry_id))
+        except ValueError:
+            raise ValueError("Choose a valid linked client or project.")
+    series_id = _text(payload.get("series_id", ""), 64)
+    generated_from = _text(payload.get("generated_from", ""), 64)
+    return {
+        "description": description,
+        "category": category,
+        "amount": amount,
+        "expense_date": expense_date,
+        "expense_type": expense_type,
+        "status": status,
+        "paid_date": paid_date,
+        "series_id": series_id if expense_type == "monthly" else "",
+        "generated_from": generated_from,
+        "inquiry_id": inquiry_id,
+        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def _display_expense(row):
+    row = dict(row)
+    try:
+        row["amount"] = _amount(row.get("amount"))
+    except ValueError:
+        row["amount"] = 0.0
+    row["description"] = _text(row.get("description"), 160)
+    row["category"] = _text(row.get("category"), 80)
+    row["expense_type"] = row.get("expense_type") if row.get("expense_type") in EXPENSE_TYPES else "one_time"
+    row["status"] = row.get("status") if row.get("status") in EXPENSE_STATUSES else "due"
+    row["expense_date"] = _valid_date(row.get("expense_date"), "Due / expense date", required=False)
+    row["paid_date"] = _valid_date(row.get("paid_date"), "Date paid", required=False)
+    if row["status"] == "paid" and not row["paid_date"]:
+        row["paid_date"] = row["expense_date"]
+    if row["status"] != "paid":
+        row["paid_date"] = None
+    row["series_id"] = _text(row.get("series_id"), 64)
+    row["generated_from"] = _text(row.get("generated_from"), 64)
+    row["inquiry_id"] = str(row.get("inquiry_id")) if row.get("inquiry_id") else None
+    return row
+
+
+def _next_monthly_expense(row, source_id):
+    try:
+        next_date = _add_one_month(row["expense_date"])
+    except (KeyError, ValueError, TypeError):
+        return None
+    series_id = row.get("series_id") or source_id
+    return {
+        "id": str(uuid.uuid4()),
+        "description": row.get("description", ""),
+        "category": row.get("category", ""),
+        "amount": row.get("amount", 0),
+        "expense_date": next_date,
+        "expense_type": "monthly",
+        "status": "due",
+        "paid_date": None,
+        "series_id": series_id,
+        "generated_from": source_id,
+        "inquiry_id": row.get("inquiry_id"),
+        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
 def _login(handler, payload):
     values = config()
     if not configured("url", "anon", "service", "admin_email"):
@@ -421,14 +510,25 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 503, {"ok": False, "error": "We couldn't load the inquiry list. Please try again."}, cookie_headers)
             return
         inquiries = [_decorate(row) for row in rows if isinstance(row, dict)]
+        expense_status, expense_rows = database_request(
+            "business_expenses?select=*&order=expense_date.desc,created_at.desc&limit=5000",
+            method="GET",
+        )
+        if expense_status != 200 or not isinstance(expense_rows, list):
+            send_json(self, 503, {"ok": False, "error": "We couldn't load Monthly Expenses. Run the new expenses migration, then try again."}, cookie_headers)
+            return
+        expenses = [_display_expense(row) for row in expense_rows if isinstance(row, dict)]
         counts = {stage: sum(1 for row in inquiries if row.get("stage") == stage) for stage in STAGES}
         unread_count = sum(1 for row in inquiries if row.get("stage") == "inbox" and not row.get("is_read"))
+        expense_due_count = sum(1 for row in expenses if row.get("status") == "due")
         send_json(self, 200, {
             "ok": True,
             "email": str(user.get("email", "")),
             "inquiries": inquiries,
+            "expenses": expenses,
             "counts": counts,
             "unread_count": unread_count,
+            "expense_due_count": expense_due_count,
         }, cookie_headers)
 
     def do_POST(self):
@@ -447,6 +547,41 @@ class handler(BaseHTTPRequestHandler):
         if action == "logout":
             send_json(self, 200, {"ok": True}, clear_session_cookie_headers(self))
             return
+        if action == "create_expense":
+            user, cookie_headers, auth_error = authenticate_admin(self)
+            if auth_error == "not_configured":
+                send_json(self, 503, {"ok": False, "error": "Admin login is not configured yet. Complete the Supabase and Vercel setup first."})
+                return
+            if not user:
+                send_json(self, 401, {"ok": False, "error": "Your session has expired. Please sign in again."}, cookie_headers)
+                return
+            try:
+                expense = _normalize_expense(payload.get("expense"))
+                expense_id = str(uuid.uuid4())
+                expense["id"] = expense_id
+                if expense["expense_type"] == "monthly":
+                    expense["series_id"] = expense_id
+                insert_rows = [expense]
+                if expense["expense_type"] == "monthly" and expense["status"] == "paid":
+                    next_row = _next_monthly_expense(expense, expense_id)
+                    if next_row:
+                        insert_rows.append(next_row)
+            except (ValueError, TypeError) as exc:
+                send_json(self, 400, {"ok": False, "error": str(exc) or "Enter valid expense details."}, cookie_headers)
+                return
+            insert_payload = insert_rows if len(insert_rows) > 1 else insert_rows[0]
+            status, created = database_request(
+                "business_expenses",
+                method="POST",
+                payload=insert_payload,
+                prefer="return=representation",
+            )
+            if status not in {200, 201}:
+                send_json(self, 503, {"ok": False, "error": "We couldn't save that expense. Check that the expenses migration has been run, then try again."}, cookie_headers)
+                return
+            created_rows = [_display_expense(row) for row in created if isinstance(row, dict)] if isinstance(created, list) else []
+            send_json(self, 200, {"ok": True, "expenses": created_rows}, cookie_headers)
+            return
         send_json(self, 400, {"ok": False, "error": "Unknown action."})
 
     def do_PATCH(self):
@@ -462,12 +597,19 @@ class handler(BaseHTTPRequestHandler):
             return
         try:
             payload = read_json_body(self, max_bytes=40 * 1024)
+        except PayloadError as exc:
+            send_json(self, 400, {"ok": False, "error": str(exc)}, cookie_headers)
+            return
+        if payload.get("entity") == "expense":
+            self._patch_expense(payload, cookie_headers)
+            return
+        try:
             inquiry_id = str(uuid.UUID(str(payload.get("id", ""))))
             raw_changes = payload.get("changes")
             if not isinstance(raw_changes, dict):
                 raise ValueError("Invalid update data.")
             changes = _normalize_changes(raw_changes)
-        except (PayloadError, ValueError, TypeError) as exc:
+        except (ValueError, TypeError) as exc:
             message = str(exc) or "Invalid update."
             send_json(self, 400, {"ok": False, "error": message}, cookie_headers)
             return
@@ -530,8 +672,110 @@ class handler(BaseHTTPRequestHandler):
         row = _decorate(updated[0]) if isinstance(updated, list) and updated else None
         send_json(self, 200, {"ok": True, "inquiry": row}, cookie_headers)
 
+    def _patch_expense(self, payload, cookie_headers):
+        try:
+            expense_id = str(uuid.UUID(str(payload.get("id", ""))))
+            raw_changes = payload.get("changes")
+            if not isinstance(raw_changes, dict):
+                raise ValueError("Invalid expense update.")
+            changes = _normalize_expense(raw_changes)
+        except (ValueError, TypeError) as exc:
+            send_json(self, 400, {"ok": False, "error": str(exc) or "Invalid expense update."}, cookie_headers)
+            return
+
+        expense_filter = quote(expense_id, safe="")
+        status, existing_rows = database_request(
+            f"business_expenses?select=*&id=eq.{expense_filter}", method="GET"
+        )
+        if status != 200 or not isinstance(existing_rows, list) or not existing_rows:
+            send_json(self, 404, {"ok": False, "error": "Expense not found."}, cookie_headers)
+            return
+        previous = _display_expense(existing_rows[0])
+        if changes.get("expense_type") == "monthly":
+            changes["series_id"] = previous.get("series_id") or expense_id
+            changes["generated_from"] = previous.get("generated_from", "")
+
+        should_advance = (
+            previous.get("status") == "due"
+            and changes.get("expense_type") == "monthly"
+            and changes.get("status") == "paid"
+        )
+        next_row = None
+        warning = ""
+        if should_advance:
+            series_filter = quote(changes["series_id"], safe="")
+            expense_date_filter = quote(changes["expense_date"], safe="")
+            check_status, future_rows = database_request(
+                "business_expenses?select=id&series_id=eq." + series_filter
+                + "&status=eq.due&expense_date=gt." + expense_date_filter + "&limit=1",
+                method="GET",
+            )
+            if check_status == 200 and isinstance(future_rows, list) and not future_rows:
+                next_row = _next_monthly_expense(changes, expense_id)
+            elif check_status != 200:
+                warning = "Expense saved as Paid, but the next monthly entry could not be checked or created. Review the recurring series."
+
+        status, updated = database_request(
+            f"business_expenses?id=eq.{expense_filter}",
+            method="PATCH",
+            payload=changes,
+            prefer="return=representation",
+        )
+        if status not in {200, 204}:
+            send_json(self, 503, {"ok": False, "error": "We couldn't save that expense. Please try again."}, cookie_headers)
+            return
+        if next_row:
+            next_status, _ = database_request(
+                "business_expenses",
+                method="POST",
+                payload=next_row,
+                prefer="return=representation",
+            )
+            if next_status not in {200, 201}:
+                warning = "Expense saved as Paid, but its next monthly entry was not created. Add the next due month manually."
+        row = _display_expense(updated[0]) if isinstance(updated, list) and updated else None
+        response = {"ok": True, "expense": row}
+        if warning:
+            response["warning"] = warning
+        send_json(self, 200, response, cookie_headers)
+
+    def do_DELETE(self):
+        if not same_origin(self):
+            send_json(self, 403, {"ok": False, "error": "This request could not be verified. Please reload the page and try again."})
+            return
+        user, cookie_headers, auth_error = authenticate_admin(self)
+        if auth_error == "not_configured":
+            send_json(self, 503, {"ok": False, "error": "Admin login is not configured yet. Complete the Supabase and Vercel setup first."})
+            return
+        if not user:
+            send_json(self, 401, {"ok": False, "error": "Your session has expired. Please sign in again."}, cookie_headers)
+            return
+        try:
+            payload = read_json_body(self, max_bytes=8 * 1024)
+            record_id = str(uuid.UUID(str(payload.get("id", ""))))
+            entity = payload.get("entity", "inquiry")
+            if entity not in {"inquiry", "expense"}:
+                raise ValueError("Choose a valid record to delete.")
+        except (PayloadError, ValueError, TypeError) as exc:
+            send_json(self, 400, {"ok": False, "error": str(exc) or "Invalid delete request."}, cookie_headers)
+            return
+        table = "business_expenses" if entity == "expense" else "inquiries"
+        record_filter = quote(record_id, safe="")
+        status, deleted = database_request(
+            f"{table}?id=eq.{record_filter}",
+            method="DELETE",
+            prefer="return=representation",
+        )
+        if status not in {200, 204}:
+            send_json(self, 503, {"ok": False, "error": "We couldn't delete this record. Please try again."}, cookie_headers)
+            return
+        if status == 200 and isinstance(deleted, list) and not deleted:
+            send_json(self, 404, {"ok": False, "error": "Record not found; it may already have been deleted."}, cookie_headers)
+            return
+        send_json(self, 200, {"ok": True, "entity": entity, "id": record_id}, cookie_headers)
+
     def do_OPTIONS(self):
-        send_json(self, 200, {"ok": True}, [("Allow", "GET, POST, PATCH, OPTIONS")])
+        send_json(self, 200, {"ok": True}, [("Allow", "GET, POST, PATCH, DELETE, OPTIONS")])
 
     def log_message(self, fmt, *args):
         print("Admin API:", fmt % args, flush=True)

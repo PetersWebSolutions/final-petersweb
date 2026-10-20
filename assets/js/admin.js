@@ -11,7 +11,8 @@
     finished: "Finished Projects",
     finished_monthly: "Finished Projects with monthly payments",
     search: "Search",
-    statistics: "Project Statistics"
+    statistics: "Project Statistics",
+    expenses: "Monthly Expenses"
   };
   var descriptions = {
     inbox: "New client inquiries waiting for review.",
@@ -20,9 +21,10 @@
     finished: "Completed projects with project payments in full.",
     finished_monthly: "Completed projects with monthly payments still due.",
     search: "Search by business name, payment status, or domain renewal date.",
-    statistics: "Current calendar-month inquiries, project movement, income, and receivables."
+    statistics: "Current month summary and an all-available-months comparison.",
+    expenses: "Track dated business expenses and recurring monthly bills."
   };
-  var state = { inquiries: [], stage: "inbox", counts: {}, unread: 0, selected: null, busy: false };
+  var state = { inquiries: [], expenses: [], stage: "inbox", counts: {}, unread: 0, expenseDueCount: 0, selected: null, pendingDelete: null, busy: false };
   var loadingScreen = $("#loading-screen");
   var loginScreen = $("#login-screen");
   var dashboard = $("#admin-shell");
@@ -33,6 +35,12 @@
   var searchPaymentFilter = $("#search-payment-filter");
   var searchRenewalFilter = $("#search-renewal-filter");
   var searchFilters = $("#search-filters");
+  var expenseFilters = $("#expense-filters");
+  var expenseStatusFilter = $("#expense-status-filter");
+  var addExpenseButton = $("#add-expense-button");
+  var expenseDialog = $("#expense-dialog");
+  var expenseForm = $("#expense-form");
+  var deleteConfirmDialog = $("#delete-confirm-dialog");
   var recordList = $("#record-list");
   var emptyState = $("#empty-state");
   var dashboardMessage = $("#dashboard-message");
@@ -92,8 +100,10 @@
     if (loginScreen) loginScreen.hidden = true;
     if (dashboard) dashboard.hidden = false;
     state.inquiries = Array.isArray(data.inquiries) ? data.inquiries : [];
+    state.expenses = Array.isArray(data.expenses) ? data.expenses : [];
     state.counts = data.counts || {};
     state.unread = Number(data.unread_count || 0);
+    state.expenseDueCount = Number(data.expense_due_count || 0);
     var signedIn = $("#signed-in-email");
     if (signedIn) signedIn.textContent = data.email || "Admin account";
     updateCounts();
@@ -102,7 +112,7 @@
     renderList();
     if (refreshTimer) window.clearInterval(refreshTimer);
     refreshTimer = window.setInterval(function () {
-      if (!document.hidden && !(dialog && dialog.open)) loadDashboard(false);
+      if (!document.hidden && !(dialog && dialog.open) && !(expenseDialog && expenseDialog.open) && !(deleteConfirmDialog && deleteConfirmDialog.open)) loadDashboard(false);
     }, 30000);
   }
 
@@ -205,6 +215,8 @@
       var badge = $("#badge-" + stage.replace("_", "-"));
       if (badge) badge.textContent = String(counts[stage] || 0);
     });
+    var expenseBadge = $("#badge-expenses");
+    if (expenseBadge) expenseBadge.textContent = String(state.expenseDueCount || 0);
     var values = {
       "#summary-unread": state.unread || 0,
       "#summary-standby": counts.standby || 0,
@@ -305,12 +317,21 @@
       article.appendChild(cell("Renewal", readableDate(item.domain_renewal_date), "record-cell--extra"));
     }
 
+    var actions = document.createElement("div");
+    actions.className = "record-actions";
     var open = document.createElement("button");
     open.className = "record-open";
     open.type = "button";
     open.textContent = "View details";
     open.addEventListener("click", function () { openDetails(item); });
-    article.appendChild(open);
+    var remove = document.createElement("button");
+    remove.className = "record-delete";
+    remove.type = "button";
+    remove.textContent = "Delete";
+    remove.setAttribute("aria-label", "Permanently delete " + (item.business || item.name || "this client/project"));
+    remove.addEventListener("click", function () { requestDelete("inquiry", item); });
+    actions.append(open, remove);
+    article.appendChild(actions);
     return article;
   }
 
@@ -352,47 +373,230 @@
     if (count) count.textContent = String(items.length);
   }
 
+  function monthKey(value) {
+    if (!value) return "";
+    var text = String(value);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text.slice(0, 7);
+    var date = new Date(text);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0");
+  }
+
+  function nextMonthKey(value) {
+    var parts = value.split("-").map(Number);
+    var year = parts[0];
+    var month = parts[1] + 1;
+    if (month > 12) { month = 1; year += 1; }
+    return year + "-" + String(month).padStart(2, "0");
+  }
+
+  function labelMonth(value) {
+    var parts = value.split("-").map(Number);
+    return new Intl.DateTimeFormat("en-PH", { month: "long", year: "numeric" }).format(new Date(parts[0], parts[1] - 1, 1));
+  }
+
+  function renderMonthlyComparison() {
+    var currentKey = monthKey(todayISO());
+    var available = [currentKey];
+    function include(value) {
+      var key = monthKey(value);
+      if (key) available.push(key);
+    }
+    state.inquiries.forEach(function (item) {
+      include(item.created_at);
+      include(item.ongoing_at);
+      include(item.completed_at);
+      (Array.isArray(item.payments) ? item.payments : []).forEach(function (payment) {
+        if (!payment) return;
+        include(payment.due_date || payment.date);
+        if (payment.status === "paid") include(payment.received_date || payment.date);
+      });
+    });
+    state.expenses.forEach(function (expense) { include(expense.expense_date); });
+    available = available.filter(Boolean).sort();
+    var first = available[0] || currentKey;
+    var last = available[available.length - 1] || currentKey;
+    var months = Object.create(null);
+    var cursor = first;
+    var guard = 0;
+    while (cursor <= last && guard < 600) {
+      months[cursor] = { income: 0, receivables: 0, expenses: 0, inquiries: 0, finished: 0 };
+      cursor = nextMonthKey(cursor);
+      guard += 1;
+    }
+    function addValue(key, field, amount) {
+      if (!key || !months[key]) return;
+      months[key][field] += Number(amount) || 0;
+    }
+    state.inquiries.forEach(function (item) {
+      addValue(monthKey(item.created_at), "inquiries", 1);
+      addValue(monthKey(item.completed_at), "finished", 1);
+      (Array.isArray(item.payments) ? item.payments : []).forEach(function (payment) {
+        if (!payment || !Number.isFinite(Number(payment.amount))) return;
+        if (payment.status === "paid") addValue(monthKey(payment.received_date || payment.date), "income", payment.amount);
+        if (payment.status === "due") addValue(monthKey(payment.due_date || payment.date), "receivables", payment.amount);
+      });
+    });
+    state.expenses.forEach(function (expense) {
+      if (Number.isFinite(Number(expense.amount))) addValue(monthKey(expense.expense_date), "expenses", expense.amount);
+    });
+
+    var body = $("#monthly-stat-body");
+    var foot = $("#monthly-stat-foot");
+    if (body) body.replaceChildren();
+    if (foot) foot.replaceChildren();
+    var totals = { income: 0, receivables: 0, expenses: 0, inquiries: 0, finished: 0 };
+    Object.keys(months).sort().forEach(function (key) {
+      var values = months[key];
+      var profit = values.income - values.expenses;
+      Object.keys(totals).forEach(function (field) { totals[field] += values[field]; });
+      if (!body) return;
+      var tr = document.createElement("tr");
+      [labelMonth(key), currency(values.income), currency(values.receivables), currency(profit), currency(values.expenses), String(values.inquiries), String(values.finished)].forEach(function (value, index) {
+        var cell = document.createElement(index === 0 ? "th" : "td");
+        if (index === 0) cell.scope = "row";
+        cell.textContent = value;
+        tr.appendChild(cell);
+      });
+      body.appendChild(tr);
+    });
+    if (foot) {
+      var totalRow = document.createElement("tr");
+      var totalProfit = totals.income - totals.expenses;
+      ["All available months", currency(totals.income), currency(totals.receivables), currency(totalProfit), currency(totals.expenses), String(totals.inquiries), String(totals.finished)].forEach(function (value, index) {
+        var cell = document.createElement(index === 0 ? "th" : "td");
+        if (index === 0) cell.scope = "row";
+        cell.textContent = value;
+        totalRow.appendChild(cell);
+      });
+      foot.appendChild(totalRow);
+    }
+    return months[currentKey] || { income: 0, receivables: 0, expenses: 0, inquiries: 0, finished: 0 };
+  }
+
   function renderStatistics() {
     var now = new Date();
     var monthLabel = $("#statistics-month");
     if (monthLabel) monthLabel.textContent = new Intl.DateTimeFormat("en-PH", { month: "long", year: "numeric" }).format(now);
-    var inquiries = 0;
-    var ongoing = 0;
-    var finished = 0;
-    var income = 0;
-    var receivable = 0;
-    state.inquiries.forEach(function (item) {
-      if (dateInCurrentMonth(item.created_at)) inquiries += 1;
-      if (dateInCurrentMonth(item.ongoing_at)) ongoing += 1;
-      if (dateInCurrentMonth(item.completed_at)) finished += 1;
-      (Array.isArray(item.payments) ? item.payments : []).forEach(function (payment) {
-        if (!payment || !Number.isFinite(Number(payment.amount))) return;
-        if (payment.status === "paid" && dateInCurrentMonth(payment.received_date || payment.date)) income += Number(payment.amount);
-        if (payment.status === "due" && dateInCurrentMonth(payment.due_date)) receivable += Number(payment.amount);
-      });
-    });
-    [["#stat-inquiries", inquiries], ["#stat-ongoing", ongoing], ["#stat-finished", finished]].forEach(function (entry) {
+    var current = renderMonthlyComparison();
+    var ongoing = state.inquiries.filter(function (item) { return dateInCurrentMonth(item.ongoing_at); }).length;
+    [["#stat-inquiries", current.inquiries], ["#stat-ongoing", ongoing], ["#stat-finished", current.finished]].forEach(function (entry) {
       var el = $(entry[0]);
       if (el) el.textContent = String(entry[1]);
     });
-    var incomeEl = $("#stat-income");
-    var receivableEl = $("#stat-receivable");
-    if (incomeEl) incomeEl.textContent = currency(income);
-    if (receivableEl) receivableEl.textContent = currency(receivable);
+    [["#stat-income", current.income], ["#stat-receivable", current.receivables], ["#stat-expenses", current.expenses], ["#stat-profit", current.income - current.expenses]].forEach(function (entry) {
+      var el = $(entry[0]);
+      if (el) el.textContent = currency(entry[1]);
+    });
+  }
+
+  function expenseProjectLabel(expense) {
+    if (!expense || !expense.inquiry_id) return "Business-wide expense";
+    var project = state.inquiries.find(function (item) { return item.id === expense.inquiry_id; });
+    return project ? (project.business || project.name || "Linked project") : "Unlinked project";
+  }
+
+  function makeExpenseCard(expense) {
+    var article = document.createElement("article");
+    article.className = "record-card record-card--expense";
+    var main = document.createElement("div");
+    main.className = "record-main expense-record-main";
+    var title = document.createElement("strong");
+    title.className = "record-name";
+    title.textContent = expense.description || "Expense";
+    var sub = document.createElement("span");
+    sub.className = "expense-record-sub";
+    sub.textContent = [expense.category || "Uncategorized", expenseProjectLabel(expense)].join(" · ");
+    main.append(title, sub);
+    article.appendChild(main);
+    article.appendChild(cell("Amount", currency(expense.amount), "record-cell--first"));
+    article.appendChild(cell("Due / expense date", readableDate(expense.expense_date), "record-cell--second"));
+    article.appendChild(cell("Type", expense.expense_type === "monthly" ? "Recurring monthly" : "One-time", "record-cell--extra"));
+    article.appendChild(cell("Status", expense.status === "paid" ? "Paid" : "Unpaid", "record-cell--extra"));
+    if (expense.status === "paid" && expense.paid_date) article.appendChild(cell("Date paid", readableDate(expense.paid_date), "record-cell--extra"));
+    var actions = document.createElement("div");
+    actions.className = "record-actions record-actions--expense";
+    if (expense.status === "due") {
+      var markPaid = document.createElement("button");
+      markPaid.className = "record-open record-open--paid";
+      markPaid.type = "button";
+      markPaid.textContent = "Mark paid";
+      markPaid.addEventListener("click", function () { quickMarkExpensePaid(expense, markPaid); });
+      actions.appendChild(markPaid);
+    }
+    var edit = document.createElement("button");
+    edit.className = "record-open record-open--edit";
+    edit.type = "button";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", function () { openExpenseForm(expense); });
+    var remove = document.createElement("button");
+    remove.className = "record-delete";
+    remove.type = "button";
+    remove.textContent = "Delete";
+    remove.setAttribute("aria-label", "Permanently delete expense " + (expense.description || "entry"));
+    remove.addEventListener("click", function () { requestDelete("expense", expense); });
+    actions.append(edit, remove);
+    article.appendChild(actions);
+    return article;
+  }
+
+  function renderExpenseList() {
+    var query = searchInput ? searchInput.value.trim().toLowerCase() : "";
+    var statusFilter = expenseStatusFilter ? expenseStatusFilter.value : "all";
+    var records = state.expenses.slice().sort(function (a, b) {
+      return String(b.expense_date || "").localeCompare(String(a.expense_date || ""));
+    });
+    if (query) {
+      records = records.filter(function (expense) {
+        return [expense.description, expense.category, expenseProjectLabel(expense), expense.amount]
+          .join(" ").toLowerCase().indexOf(query) !== -1;
+      });
+    }
+    if (statusFilter !== "all") records = records.filter(function (expense) { return expense.status === statusFilter; });
+    recordList.replaceChildren();
+    records.forEach(function (expense) { recordList.appendChild(makeExpenseCard(expense)); });
+    var countLine = $("#list-count");
+    if (countLine) countLine.textContent = records.length + (records.length === 1 ? " expense entry" : " expense entries");
+    if (emptyState) emptyState.hidden = records.length > 0;
+    if (!records.length) {
+      var emptyTitle = $("#empty-title");
+      var emptyCopy = $("#empty-copy");
+      if (emptyTitle) emptyTitle.textContent = query || statusFilter !== "all" ? "No matching expenses" : "No expenses recorded yet";
+      if (emptyCopy) emptyCopy.textContent = query || statusFilter !== "all"
+        ? "Try another search or expense status."
+        : "Add a dated expense or a recurring monthly bill to get started.";
+    }
   }
 
   function renderList() {
     if (!recordList) return;
     var refreshAction = $("#refresh-button");
-    if (refreshAction) refreshAction.textContent = state.stage === "statistics" ? "Refresh data" : "Refresh inbox";
     var isStats = state.stage === "statistics";
+    var isExpenses = state.stage === "expenses";
+    if (refreshAction) refreshAction.textContent = isStats ? "Refresh data" : (isExpenses ? "Refresh expenses" : "Refresh inbox");
     if (listPanel) listPanel.hidden = isStats;
     if (statisticsPanel) statisticsPanel.hidden = !isStats;
+    if (addExpenseButton) addExpenseButton.hidden = !isExpenses;
+    if (searchFilters) searchFilters.hidden = state.stage !== "search";
+    if (expenseFilters) expenseFilters.hidden = !isExpenses;
+
     if (isStats) {
       var statsTitle = $("#stage-heading");
       var statsSub = $("#stage-description");
       if (statsTitle) statsTitle.textContent = labels.statistics;
       if (statsSub) statsSub.textContent = descriptions.statistics;
+    } else if (isExpenses) {
+      var expenseHeading = $("#stage-heading");
+      var expenseSubtitle = $("#stage-description");
+      var expenseListTitle = $("#list-title");
+      if (expenseHeading) expenseHeading.textContent = labels.expenses;
+      if (expenseSubtitle) expenseSubtitle.textContent = descriptions.expenses;
+      if (expenseListTitle) expenseListTitle.textContent = labels.expenses;
+      if (searchInput) {
+        searchInput.placeholder = "Search description, category, or project";
+        searchInput.setAttribute("aria-label", "Search expenses");
+      }
+      renderExpenseList();
     } else {
       var title = $("#stage-heading");
       var subtitle = $("#stage-description");
@@ -401,13 +605,6 @@
       if (title) title.textContent = labels[state.stage] || labels.inbox;
       if (subtitle) subtitle.textContent = descriptions[state.stage] || descriptions.inbox;
       if (listTitle) listTitle.textContent = labels[state.stage] || labels.inbox;
-      $$("[data-stage]").forEach(function (button) {
-        var active = button.getAttribute("data-stage") === state.stage;
-        button.classList.toggle("is-active", active);
-        if (active) button.setAttribute("aria-current", "page");
-        else button.removeAttribute("aria-current");
-      });
-      if (searchFilters) searchFilters.hidden = state.stage !== "search";
       if (searchInput) {
         searchInput.placeholder = state.stage === "search" ? "Search business name" : "Search name or business";
         searchInput.setAttribute("aria-label", state.stage === "search" ? "Search by business name" : "Search this section");
@@ -701,7 +898,7 @@
       standby: [{ stage: "ongoing", text: "Move to On-going" }],
       ongoing: [{ stage: "finished", text: "Move to Finished (paid in full)" }, { stage: "finished_monthly", text: "Move to Finished · monthly due" }],
       finished_monthly: [{ stage: "finished", text: "Move to Finished (paid in full)" }],
-      finished: []
+      finished: [{ stage: "finished_monthly", text: "Move to Finished · monthly due" }]
     }[stage] || [];
     var container = $("#stage-actions");
     if (!container) return;
@@ -816,6 +1013,165 @@
     return result.inquiry;
   }
 
+  function updateExpensePaidDateControl() {
+    var status = $("#expense-status");
+    var wrap = $("#expense-paid-date-wrap");
+    var paidDate = $("#expense-paid-date");
+    var isPaid = status && status.value === "paid";
+    if (wrap) wrap.hidden = !isPaid;
+    if (paidDate) {
+      paidDate.required = Boolean(isPaid);
+      if (isPaid && !paidDate.value) paidDate.value = todayISO();
+    }
+  }
+
+  function populateExpenseProjects(selectedId) {
+    var select = $("#expense-project");
+    if (!select) return;
+    var defaultOption = document.createElement("option");
+    defaultOption.value = "";
+    defaultOption.textContent = "Business-wide expense";
+    select.replaceChildren(defaultOption);
+    state.inquiries.slice().sort(function (a, b) {
+      return String(a.business || a.name || "").localeCompare(String(b.business || b.name || ""));
+    }).forEach(function (item) {
+      var option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = (item.business || item.name || "Client") + (item.name && item.business ? " · " + item.name : "");
+      select.appendChild(option);
+    });
+    if (selectedId && !state.inquiries.some(function (item) { return item.id === selectedId; })) {
+      var missing = document.createElement("option");
+      missing.value = selectedId;
+      missing.textContent = "Linked project (not in current list)";
+      select.appendChild(missing);
+    }
+    select.value = selectedId || "";
+  }
+
+  function openExpenseForm(expense) {
+    if (!expenseDialog || !expenseForm) return;
+    expense = expense || null;
+    expenseForm.reset();
+    var editing = Boolean(expense && expense.id);
+    $("#expense-dialog-title").textContent = editing ? "Edit expense" : "Add expense";
+    $("#save-expense-button").textContent = editing ? "Save changes" : "Save expense";
+    $("#expense-id").value = editing ? expense.id : "";
+    $("#expense-series-id").value = editing ? (expense.series_id || "") : "";
+    $("#expense-description").value = editing ? (expense.description || "") : "";
+    $("#expense-category").value = editing ? (expense.category || "") : "";
+    $("#expense-amount").value = editing && expense.amount !== undefined ? String(expense.amount) : "";
+    $("#expense-date").value = editing ? (expense.expense_date || todayISO()) : todayISO();
+    $("#expense-type").value = editing ? (expense.expense_type || "one_time") : "one_time";
+    $("#expense-status").value = editing ? (expense.status || "due") : "paid";
+    $("#expense-paid-date").value = editing ? (expense.paid_date || (expense.status === "paid" ? todayISO() : "")) : todayISO();
+    populateExpenseProjects(editing ? expense.inquiry_id : "");
+    updateExpensePaidDateControl();
+    message($("#expense-save-message"), "", "");
+    if (typeof expenseDialog.showModal === "function") expenseDialog.showModal();
+    else expenseDialog.setAttribute("open", "");
+  }
+
+  function readExpenseChanges() {
+    var description = $("#expense-description").value.trim();
+    var amountText = $("#expense-amount").value.trim();
+    var amount = Number(amountText);
+    var expenseDate = $("#expense-date").value;
+    var status = $("#expense-status").value;
+    if (!description) throw new Error("Enter an expense description.");
+    if (!amountText || !Number.isFinite(amount) || amount < 0 || amount > 100000000) throw new Error("Enter a valid non-negative amount in PHP.");
+    if (!expenseDate) throw new Error("Choose a due / expense date.");
+    if (status === "paid" && !$("#expense-paid-date").value) throw new Error("Choose the date the expense was paid.");
+    return {
+      description: description,
+      category: $("#expense-category").value.trim(),
+      amount: amount,
+      expense_date: expenseDate,
+      expense_type: $("#expense-type").value,
+      status: status,
+      paid_date: status === "paid" ? $("#expense-paid-date").value : null,
+      inquiry_id: $("#expense-project").value || null,
+      series_id: $("#expense-series-id").value || ""
+    };
+  }
+
+  async function patchExpense(id, changes) {
+    var result = await api("PATCH", { entity: "expense", id: id, changes: changes });
+    await loadDashboard(false);
+    return result;
+  }
+
+  async function quickMarkExpensePaid(expense, button) {
+    if (!expense || state.busy) return;
+    state.busy = true;
+    button.disabled = true;
+    var originalText = button.textContent;
+    button.textContent = "Saving…";
+    try {
+      var result = await patchExpense(expense.id, {
+        description: expense.description,
+        category: expense.category || "",
+        amount: Number(expense.amount),
+        expense_date: expense.expense_date,
+        expense_type: expense.expense_type,
+        status: "paid",
+        paid_date: todayISO(),
+        inquiry_id: expense.inquiry_id || null,
+        series_id: expense.series_id || ""
+      });
+      message(dashboardMessage, result.warning || "Expense marked Paid.", result.warning ? "error" : "success");
+      window.setTimeout(function () { message(dashboardMessage, "", ""); }, 5000);
+    } catch (err) {
+      message(dashboardMessage, err.message, "error");
+      button.disabled = false;
+      button.textContent = originalText;
+    } finally {
+      state.busy = false;
+    }
+  }
+
+  function requestDelete(entity, record) {
+    if (!deleteConfirmDialog || !record) return;
+    state.pendingDelete = { entity: entity, record: record };
+    var recordName = entity === "expense"
+      ? (record.description || "this expense")
+      : (record.business || record.name || "this client/project");
+    $("#delete-confirm-title").textContent = "Delete “" + recordName + "” permanently?";
+    $("#delete-confirm-copy").textContent = entity === "expense"
+      ? "This permanently deletes this expense entry and cannot be undone. Other entries in its monthly series will remain unless deleted separately."
+      : "This permanently deletes the inquiry/project and its payment, domain, and admin-note history. This cannot be undone. Any linked expense entries will remain in Monthly Expenses and be unlinked from this project.";
+    message($("#delete-save-message"), "", "");
+    if (typeof deleteConfirmDialog.showModal === "function") deleteConfirmDialog.showModal();
+    else deleteConfirmDialog.setAttribute("open", "");
+  }
+
+  async function confirmDelete() {
+    if (!state.pendingDelete || state.busy) return;
+    state.busy = true;
+    var pending = state.pendingDelete;
+    var button = $("#confirm-delete-button");
+    var originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = "Deleting…";
+    message($("#delete-save-message"), "Deleting permanently…", "");
+    try {
+      await api("DELETE", { entity: pending.entity, id: pending.record.id });
+      if (pending.entity === "inquiry" && state.selected && state.selected.id === pending.record.id && dialog && dialog.open) dialog.close();
+      state.selected = pending.entity === "inquiry" && state.selected && state.selected.id === pending.record.id ? null : state.selected;
+      if (deleteConfirmDialog && deleteConfirmDialog.open) deleteConfirmDialog.close();
+      state.pendingDelete = null;
+      await loadDashboard(false);
+      message(dashboardMessage, pending.entity === "expense" ? "Expense deleted permanently." : "Client/project deleted permanently.", "success");
+      window.setTimeout(function () { message(dashboardMessage, "", ""); }, 5000);
+    } catch (err) {
+      message($("#delete-save-message"), err.message, "error");
+    } finally {
+      state.busy = false;
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
+
   async function moveStage(item, stage, button) {
     if (!item || state.busy) return;
     state.busy = true;
@@ -863,8 +1219,12 @@
     try { await api("POST", { action: "logout" }); } catch (err) { /* Clear local view even if network is unavailable. */ }
     if (refreshTimer) window.clearInterval(refreshTimer);
     state.inquiries = [];
+    state.expenses = [];
     state.selected = null;
+    state.pendingDelete = null;
     if (dialog && dialog.open) dialog.close();
+    if (expenseDialog && expenseDialog.open) expenseDialog.close();
+    if (deleteConfirmDialog && deleteConfirmDialog.open) deleteConfirmDialog.close();
     if (loginForm) loginForm.reset();
     showLogin("You have signed out.");
   }
@@ -878,6 +1238,7 @@
       if (searchInput) searchInput.value = "";
       if (searchPaymentFilter) searchPaymentFilter.value = "all";
       if (searchRenewalFilter) searchRenewalFilter.value = "all";
+      if (expenseStatusFilter) expenseStatusFilter.value = "all";
       message(dashboardMessage, "", "");
       renderList();
     });
@@ -885,6 +1246,7 @@
   if (searchInput) searchInput.addEventListener("input", renderList);
   if (searchPaymentFilter) searchPaymentFilter.addEventListener("change", renderList);
   if (searchRenewalFilter) searchRenewalFilter.addEventListener("change", renderList);
+  if (expenseStatusFilter) expenseStatusFilter.addEventListener("change", renderList);
   var refreshButton = $("#refresh-button");
   if (refreshButton) refreshButton.addEventListener("click", function () { loadDashboard(true); });
   var refreshStatsButton = $("#refresh-stats-button");
@@ -893,6 +1255,68 @@
   if (dialog) {
     $$('[data-close-dialog]', dialog).forEach(function (button) { button.addEventListener("click", function () { dialog.close(); }); });
     dialog.addEventListener("click", function (event) { if (event.target === dialog) dialog.close(); });
+  }
+  if (addExpenseButton) addExpenseButton.addEventListener("click", function () { openExpenseForm(null); });
+  if (expenseDialog) {
+    $$('[data-close-expense]', expenseDialog).forEach(function (button) { button.addEventListener("click", function () { expenseDialog.close(); }); });
+    expenseDialog.addEventListener("click", function (event) { if (event.target === expenseDialog) expenseDialog.close(); });
+  }
+  var expenseStatus = $("#expense-status");
+  if (expenseStatus) expenseStatus.addEventListener("change", updateExpensePaidDateControl);
+  var expenseType = $("#expense-type");
+  if (expenseType) expenseType.addEventListener("change", function () {
+    if (expenseType.value === "monthly" && !$("#expense-id").value && expenseStatus && expenseStatus.value === "paid") {
+      expenseStatus.value = "due";
+      $("#expense-paid-date").value = "";
+    }
+    updateExpensePaidDateControl();
+  });
+  if (expenseForm) {
+    expenseForm.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      if (state.busy) return;
+      state.busy = true;
+      var button = $("#save-expense-button");
+      button.disabled = true;
+      message($("#expense-save-message"), "Saving…", "");
+      try {
+        var changes = readExpenseChanges();
+        var expenseId = $("#expense-id").value;
+        var result;
+        if (expenseId) {
+          result = await api("PATCH", { entity: "expense", id: expenseId, changes: changes });
+        } else {
+          result = await api("POST", { action: "create_expense", expense: changes });
+        }
+        if (expenseDialog && expenseDialog.open) expenseDialog.close();
+        await loadDashboard(false);
+        message(dashboardMessage, result.warning || (expenseId ? "Expense updated." : "Expense saved."), result.warning ? "error" : "success");
+        window.setTimeout(function () { message(dashboardMessage, "", ""); }, 5000);
+      } catch (err) {
+        message($("#expense-save-message"), err.message, "error");
+      } finally {
+        state.busy = false;
+        button.disabled = false;
+      }
+    });
+  }
+  var cancelDeleteButton = $("#cancel-delete-button");
+  if (cancelDeleteButton) cancelDeleteButton.addEventListener("click", function () {
+    if (deleteConfirmDialog && deleteConfirmDialog.open) deleteConfirmDialog.close();
+    state.pendingDelete = null;
+  });
+  var confirmDeleteButton = $("#confirm-delete-button");
+  if (confirmDeleteButton) confirmDeleteButton.addEventListener("click", confirmDelete);
+  if (deleteConfirmDialog) {
+    deleteConfirmDialog.addEventListener("click", function (event) {
+      if (event.target === deleteConfirmDialog && !state.busy) {
+        deleteConfirmDialog.close();
+        state.pendingDelete = null;
+      }
+    });
+    deleteConfirmDialog.addEventListener("close", function () {
+      if (!state.busy) state.pendingDelete = null;
+    });
   }
   if (projectForm) {
     projectForm.addEventListener("submit", async function (event) {

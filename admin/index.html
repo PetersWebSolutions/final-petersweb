@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#101827">
   <title>Admin Login — PetersWeb Solutions</title>
   <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="../assets/css/admin.css?v=admin-pipeline-2">
-  <script defer src="../assets/js/admin.js?v=admin-pipeline-2"></script>
+  <link rel="stylesheet" href="../assets/css/admin.css?v=admin-expenses-4">
+  <script defer src="../assets/js/admin.js?v=admin-expenses-4"></script>
 </head>
 <body class="admin-page">
   <a class="skip-link" href="#admin-main">Skip to admin content</a>
@@ -22,7 +22,7 @@
       <div class="login-card">
         <p class="admin-eyebrow"><span></span> Private workspace</p>
         <h1 id="login-title">Admin Login</h1>
-        <p class="login-intro">Sign in to view client inquiries and manage project stages.</p>
+        <p class="login-intro">Sign in to review inquiries, manage projects, and track business expenses.</p>
         <form id="login-form" autocomplete="on">
           <label for="login-email">Admin email</label>
           <input id="login-email" name="email" type="email" autocomplete="username" required maxlength="254" inputmode="email">
@@ -70,6 +70,10 @@
           <button class="pipeline-nav__item" type="button" data-stage="statistics">
             <span class="pipeline-nav__icon" aria-hidden="true">▤</span><span class="pipeline-nav__text">Project Statistics</span>
           </button>
+          <button class="pipeline-nav__item" type="button" data-stage="expenses">
+            <span class="pipeline-nav__icon" aria-hidden="true">₱</span><span class="pipeline-nav__text">Monthly Expenses</span>
+            <span class="count-badge count-badge--quiet" id="badge-expenses">0</span>
+          </button>
         </nav>
         <div class="sidebar-bottom">
           <div class="admin-identity">
@@ -89,6 +93,7 @@
             <p class="topbar-subtitle" id="stage-description">New client inquiries waiting for review.</p>
           </div>
           <div class="topbar-actions">
+            <button class="button button--gold" type="button" id="add-expense-button" hidden>+ Add expense</button>
             <button class="button button--quiet" type="button" id="refresh-button">Refresh inbox</button>
             <button class="button button--outline mobile-signout" type="button" id="mobile-logout-button">Sign out</button>
           </div>
@@ -137,6 +142,15 @@
                   </select>
                 </label>
               </div>
+              <div class="expense-filters" id="expense-filters" hidden>
+                <label>Expense status
+                  <select id="expense-status-filter">
+                    <option value="all">All statuses</option>
+                    <option value="due">Unpaid</option>
+                    <option value="paid">Paid</option>
+                  </select>
+                </label>
+              </div>
             </div>
           </div>
           <p class="dashboard-message" id="dashboard-message" role="status" aria-live="polite"></p>
@@ -160,8 +174,23 @@
             <article class="stat-card"><span>Monthly finished</span><strong id="stat-finished">0</strong><small>Projects completed this month</small></article>
             <article class="stat-card stat-card--income"><span>Total income</span><strong id="stat-income">₱0.00</strong><small>Payments received this month</small></article>
             <article class="stat-card stat-card--receivable"><span>Monthly receivable</span><strong id="stat-receivable">₱0.00</strong><small>Unpaid payments due this month</small></article>
+            <article class="stat-card stat-card--expense"><span>Monthly expenses</span><strong id="stat-expenses">₱0.00</strong><small>Recorded expenses dated this month</small></article>
+            <article class="stat-card stat-card--profit"><span>Monthly profit</span><strong id="stat-profit">₱0.00</strong><small>Income minus recorded expenses</small></article>
           </div>
-          <p class="stats-footnote">Income counts recorded payments only. Receivables count scheduled payments due during this calendar month; the dashboard does not process or verify payments.</p>
+          <p class="stats-footnote">Income counts payments actually received this month. Receivables count unpaid project payments due this month. Expenses are entries dated this month, whether marked Paid or Unpaid; profit is income minus those recorded expenses. Older project completion dates are not guessed or backfilled. Payments are manual records—the dashboard does not process or verify them.</p>
+          <section class="monthly-comparison" aria-labelledby="monthly-comparison-title">
+            <div class="monthly-comparison__heading">
+              <div><p class="detail-kicker">All available months</p><h3 id="monthly-comparison-title">Month-by-month comparison</h3></div>
+              <p>Months include recorded history and scheduled future due dates.</p>
+            </div>
+            <div class="monthly-table-wrap" role="region" aria-label="Monthly project and financial comparison" tabindex="0">
+              <table class="monthly-table">
+                <thead><tr><th scope="col">Month</th><th scope="col">Income</th><th scope="col">Receivables</th><th scope="col">Profit</th><th scope="col">Expenses</th><th scope="col">Inquiries</th><th scope="col">Finished projects</th></tr></thead>
+                <tbody id="monthly-stat-body"><tr><td colspan="7">Loading monthly data…</td></tr></tbody>
+                <tfoot id="monthly-stat-foot"></tfoot>
+              </table>
+            </div>
+          </section>
         </section>
 
         <footer class="admin-footer"><span>Private client workspace</span><span>Payments are recorded manually; this dashboard does not process payments.</span></footer>
@@ -242,6 +271,69 @@
         <p class="detail-save-message" id="detail-save-message" role="status" aria-live="polite"></p>
       </form>
     </div>
+  </dialog>
+
+  <dialog class="expense-dialog" id="expense-dialog" aria-labelledby="expense-dialog-title">
+    <div class="detail-dialog__head">
+      <div><p class="admin-eyebrow"><span></span> Business expense</p><h2 id="expense-dialog-title">Add expense</h2></div>
+      <button class="close-button" type="button" data-close-expense aria-label="Close expense form">×</button>
+    </div>
+    <form id="expense-form" class="expense-form">
+      <input id="expense-id" type="hidden">
+      <input id="expense-series-id" type="hidden">
+      <label>Description
+        <input id="expense-description" type="text" maxlength="160" required placeholder="e.g. Website hosting">
+      </label>
+      <label>Category <span class="optional-label">(optional)</span>
+        <input id="expense-category" type="text" maxlength="80" placeholder="e.g. Hosting, software, utilities">
+      </label>
+      <div class="expense-form__row">
+        <label>Amount (₱)
+          <input id="expense-amount" type="number" min="0" max="100000000" step="0.01" inputmode="decimal" required placeholder="0.00">
+        </label>
+        <label>Due / expense date
+          <input id="expense-date" type="date" required>
+        </label>
+      </div>
+      <div class="expense-form__row">
+        <label>Expense type
+          <select id="expense-type">
+            <option value="one_time">One-time expense</option>
+            <option value="monthly">Recurring monthly bill</option>
+          </select>
+        </label>
+        <label>Status
+          <select id="expense-status">
+            <option value="due">Unpaid</option>
+            <option value="paid">Paid</option>
+          </select>
+        </label>
+      </div>
+      <label id="expense-paid-date-wrap">Date paid
+        <input id="expense-paid-date" type="date">
+      </label>
+      <label>Linked client / project <span class="optional-label">(optional)</span>
+        <select id="expense-project"><option value="">Business-wide expense</option></select>
+      </label>
+      <p class="expense-form__note">A recurring bill marked Paid creates the next month's Unpaid entry. Delete the future entry to stop that bill's series. Expenses count in statistics by their due / expense date. Do not enter passwords or card/bank credentials.</p>
+      <div class="expense-form__actions">
+        <button class="button button--outline" type="button" data-close-expense>Cancel</button>
+        <button class="button button--gold" type="submit" id="save-expense-button">Save expense</button>
+      </div>
+      <p class="detail-save-message" id="expense-save-message" role="status" aria-live="polite"></p>
+    </form>
+  </dialog>
+
+  <dialog class="confirm-dialog" id="delete-confirm-dialog" aria-labelledby="delete-confirm-title" aria-describedby="delete-confirm-copy">
+    <div class="confirm-dialog__icon" aria-hidden="true">!</div>
+    <p class="detail-kicker">Permanent action</p>
+    <h2 id="delete-confirm-title">Delete permanently?</h2>
+    <p id="delete-confirm-copy">This deletion cannot be undone.</p>
+    <div class="confirm-dialog__actions">
+      <button class="button button--outline" type="button" id="cancel-delete-button">Cancel</button>
+      <button class="button button--danger" type="button" id="confirm-delete-button">Yes, delete permanently</button>
+    </div>
+    <p class="detail-save-message" id="delete-save-message" role="status" aria-live="polite"></p>
   </dialog>
 </body>
 </html>
