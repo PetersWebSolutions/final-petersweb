@@ -678,6 +678,7 @@
     var formHead = $(".form-card__head");
     var successName = $("[data-success-name]");
     var successRef = $("[data-success-ref]");
+    var successEmailStatus = $("[data-success-email-status]");
     var submitBtn = $('button[type="submit"]', form);
     var submitLabel = $("[data-submit-label]", form);
     var resetBtn = $("[data-reset-form]");
@@ -797,13 +798,19 @@
       form.setAttribute("aria-busy", isBusy ? "true" : "false");
     }
 
-    function showSuccess(name, reference) {
+    function showSuccess(name, reference, confirmationSent) {
       if (!form || !successPanel) return;
       form.hidden = true;
       if (formHead) formHead.hidden = true;
       successPanel.hidden = false;
       if (successName) successName.textContent = (name || "there").split(/\s+/)[0];
       if (successRef) successRef.textContent = reference || "Pending";
+      if (successEmailStatus) {
+        successEmailStatus.textContent = confirmationSent
+          ? "We’ve sent a confirmation email to the address you provided. If it’s not in your inbox, please check your spam or junk folder."
+          : "Your inquiry has been saved, but we couldn’t send an automatic confirmation email. We’ll still use your contact details to follow up.";
+        successEmailStatus.hidden = false;
+      }
       successPanel.focus({ preventScroll: true });
       successPanel.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
     }
@@ -904,9 +911,11 @@
             if (statusEl) statusEl.textContent = "Your inquiry wasn't sent.";
             return;
           }
-          if (statusEl) statusEl.textContent = "Inquiry received.";
+          if (statusEl) statusEl.textContent = json.confirmation_sent === true
+            ? "Inquiry received. Confirmation email sent."
+            : "Inquiry received and saved. Automatic confirmation email unavailable.";
           emitConversionEvent("lead_form_submit_success", { package: data.package });
-          showSuccess(data.name, json.reference);
+          showSuccess(data.name, json.reference, json.confirmation_sent === true);
         })
         .catch(function (error) {
           var message = error && error.name === "AbortError"
@@ -934,6 +943,10 @@
         updateMessengerContext();
         clearErrors();
         if (statusEl) statusEl.textContent = "";
+        if (successEmailStatus) {
+          successEmailStatus.textContent = "";
+          successEmailStatus.hidden = true;
+        }
         if (packageSelect) packageSelect.value = "unsure";
         setBusy(false);
         var nameField = getField("name");

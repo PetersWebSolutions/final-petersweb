@@ -1,69 +1,96 @@
-# PetersWeb Solutions admin dashboard setup and upgrade guide
+# PetersWeb Solutions admin and inquiry-email setup
 
-## Current production status
+## Current production state
 
-The first-wave admin enhancements have been uploaded to GitHub and Vercel reported the latest `main` deployment as **Ready / Production**. The first-wave Supabase migration has already been run successfully. The second-wave features below are **not live** until the separate expense migration is run and the updated source is uploaded and deployed.
+The admin dashboard’s first- and second-wave features are deployed on Vercel. The second-wave Supabase migration has already been run successfully. Existing inquiry/project records and stages are preserved. **Do not rerun** `supabase-schema.sql`, `supabase-admin-enhancements-migration.sql`, or `supabase-expenses-migration.sql` on the existing production project.
 
-The second-wave release preserves existing inquiries and stages. It does not automatically move the existing Finished project or alter its payment schedule.
+Valid public-form submissions are stored in the Supabase `inquiries` table and appear in the admin Inbox. The email-notification enhancement in this source package is a separate update: it will send email only after the updated source is deployed and the Resend settings below are configured.
 
-## Second-wave dashboard behavior
+## What the inquiry-email update does
 
-- **Finished Projects → Finished Projects with monthly payments:** a completed project can be moved to the monthly-payment destination when it has at least one unpaid Monthly payment row. The destination is for completed projects with a Monthly amount still due. To return a fully paid project to Finished, clear or remove due scheduled payments first.
-- **Permanent deletion:** each client/project row has a Delete action. The confirmation names the record, explains that the deletion cannot be undone, and offers **Yes, delete permanently** or **Cancel**. Deleting a client/project removes its inquiry, payment schedule, domain details, and admin notes. Any linked expense entries remain in Monthly Expenses and are unlinked from the deleted project. Expense entries have their own permanent-delete confirmation; deleting one recurring month does not delete other months in its series.
-- **Monthly Expenses:** add dated one-time ledger entries or recurring monthly bills. Each entry has a description, category, amount, due/expense date, Paid/Unpaid status, and optional link to a client/project. Marking a recurring monthly bill Paid creates the next month's Unpaid row. Delete that future row to stop the series. Expense rows are dated by their due/expense date; Paid/Unpaid status does not change which month they count in.
-- **Project Statistics:** current-month cards are retained, and the all-available-months comparison table includes income, receivables, profit, expenses, inquiry count, and finished-project count. It includes months with recorded history and scheduled future due dates.
-  - Income = project payments actually received in that month.
-  - Receivables = unpaid scheduled project payments due in that month.
-  - Expenses = all expense rows dated in that month, including Unpaid entries.
-  - Profit = income minus those recorded expenses.
-  - Inquiries = submissions received in that month.
-  - Finished projects = projects completed in that month, where a completion date is recorded. Historical dates are not guessed or backfilled.
-- Domain renewal reminders remain in-dashboard only. The dashboard does not send email, SMS, or push notifications and does not process or verify payments.
+After a valid inquiry is saved to Supabase, the Vercel API sends two separate transactional emails through Resend:
 
-## Apply the second-wave upgrade to the existing live project
+1. **Business notification** to `INQUIRY_NOTIFY_EMAIL`, with the inquiry details and a link to the admin Inbox. Replying to that message goes to the visitor.
+2. **Visitor acknowledgment** to the email entered in the form. Replying to that message goes to the business inbox.
 
-The Supabase project, admin user, Vercel variables, and first-wave migration are already configured. **Do these steps in order.** No Bash or command-line steps are needed.
+The acknowledgment copy is: “Thank you for reaching out to PetersWeb Solutions! We’ve received your inquiry. We’ll be in touch by email or phone so we can discuss how we can help.”
 
-### 1. Run the new expenses migration first
+The inquiry is saved before email is attempted. If email delivery is not configured or the provider is temporarily unavailable, the record remains in the admin Inbox and the visitor sees that an automatic confirmation could not be sent. The form does not send marketing emails.
 
-1. Open the Supabase project and choose **SQL Editor → New query**.
-2. Open `supabase-expenses-migration.sql` from the updated source package.
-3. Copy the full contents into the SQL Editor and click **Run**.
-4. A successful result may say **“Success. No rows returned.”**
+## Enable email delivery for the existing live site
 
-Run this new migration only once. **Do not rerun** `supabase-admin-enhancements-migration.sql`, and do not run the fresh-project `supabase-schema.sql` over the existing production database. The new migration creates private expense storage and leaves all existing project records and stages unchanged.
+No Bash or command-line steps are needed. You will need access to Resend, the DNS settings for `peterswebsolutions.com`, and the Vercel project.
 
-### 2. Upload the updated source to GitHub
+### 1. Verify the sender domain with Resend
 
-1. Download and extract the updated source ZIP.
+1. Create/sign in to a Resend account at <https://resend.com>.
+2. In Resend, open **Domains → Add Domain** and add `peterswebsolutions.com` for the sender `admin@peterswebsolutions.com`.
+3. Copy the DNS records Resend displays and add them at the provider that manages the domain’s DNS. Use the record names and values exactly as shown; leave existing website records unchanged.
+4. **Do not delete or replace existing MX records** used by the `admin@peterswebsolutions.com` mailbox. If Resend shows a record that conflicts with an existing record, pause before changing DNS and get help reviewing it.
+5. Wait for Resend to show the domain as **Verified**. DNS verification can take some time.
+
+Resend requires a verified sender domain. It also recommends sending from a subdomain for reputation separation; if you prefer a subdomain instead, pause before proceeding because the sender address and Vercel value will need to match it. See Resend’s [domain setup guide](https://resend.com/docs/add-a-domain) and [sender-address guide](https://resend.com/docs/knowledge-base/how-do-I-create-an-email-address-or-sender-in-resend).
+
+### 2. Create a Resend API key
+
+1. In Resend, open **API Keys** and create a key that has permission to send email (use the narrowest available permission).
+2. Copy it for the next step. Keep it private: **do not send it in chat, put it in GitHub, or add it to website JavaScript.**
+
+### 3. Add the settings to Vercel
+
+1. Open Vercel and select project `project-e7yjm`.
+2. Go to **Settings → Environment Variables**.
+3. Add these three **Production** variables:
+
+   | Name | Value |
+   |---|---|
+   | `RESEND_API_KEY` | The private API key from Resend |
+   | `INQUIRY_NOTIFY_EMAIL` | `admin@peterswebsolutions.com` |
+   | `INQUIRY_FROM_EMAIL` | `PetersWeb Solutions <admin@peterswebsolutions.com>` |
+
+4. Save the variables. If a value changes, redeploy so the Production function receives the updated settings.
+
+These inquiry-email settings are separate from `ADMIN_EMAIL`, which only controls who may sign in to `/admin/`. Keep all Supabase and Resend secret keys server-side in Vercel; never add them to HTML, browser JavaScript, GitHub, or chat.
+
+### 4. Upload and deploy the source update
+
+1. Download and extract `petersweb-website-source-admin-inquiry-email.zip`.
 2. In the connected GitHub repository, choose **Add file → Upload files**.
-3. Upload the extracted files and folders to the repository root, preserving their folder structure. Do not upload the ZIP as a single file.
-4. Commit the upload to `main`. Vercel should start a Production deployment. The current Supabase environment variables should remain in Vercel and do not need to be re-entered.
-5. Wait for Vercel to show **Ready**, then open `https://www.peterswebsolutions.com/admin/` and sign in.
+3. Upload the extracted files and folders to the repository root, preserving their folder structure. Do not upload the ZIP as one file.
+4. Commit the changes to `main` and wait for the Vercel Production deployment to show **Ready**.
 
-### 3. Verify safely
+No Supabase migration is required for inquiry email delivery.
 
-1. Confirm the **Monthly Expenses** navigation and the all-month comparison table are present.
-2. Add a small test one-time expense. Confirm it appears in the ledger and in the matching month's Expenses and Profit figures. Delete the test entry if appropriate.
-3. Create a test recurring monthly bill with a due date and amount. Mark it Paid and confirm the next month's Unpaid row appears. Delete that future row if you do not want to keep the test series.
-4. Optionally link a test expense to a project and verify the project name appears. Deleting a client/project keeps its expense entries but removes the project link.
-5. For a safe stage-transfer test, use a test project and add an unpaid Monthly payment row before moving it from Finished to Finished Projects with monthly payments. Do not alter the existing Finished project unless you intend to.
-6. Test permanent deletion only with a disposable test inquiry/project. A confirmed deletion cannot be undone.
-7. Check the statistics for a month with known entries. Expenses count in their due/expense month even if still Unpaid; profit equals received income minus all expense entries dated in that month.
+### 5. Test both emails
 
-## Fresh-project setup reference
+1. Submit one test inquiry on the live website using an email address you can check.
+2. Confirm the inquiry appears once in `/admin/` → **Inbox**.
+3. Confirm the notification reaches `admin@peterswebsolutions.com` and the visitor address receives the acknowledgment. Check Spam/Junk if either message is missing.
+4. In Resend, check the email logs for accepted, delivered, bounced, or rejected status. A provider-accepted send is not a guarantee that the recipient’s mailbox placed it in Inbox.
+
+## Existing admin behavior
+
+- **Project stages:** Inbox, Standby, On-going, Finished, and Finished Projects with monthly payments. A completed project moves to the monthly-payment destination only when it has at least one unpaid Monthly payment row.
+- **Permanent deletion:** deleting a client/project permanently removes its inquiry, payment schedule, domain details, and admin notes. Linked expense entries remain but are unlinked. Expense rows have a separate permanent-delete confirmation.
+- **Monthly Expenses:** dated one-time entries and recurring monthly bills. Marking a recurring bill Paid creates the next month’s Unpaid row. Expense rows count in their due/expense month whether Paid or Unpaid.
+- **Project Statistics:** retains the current-month summary and compares all available months. Income is payments received in that month; receivables are unpaid scheduled payments due in that month; expenses include all rows dated in that month; profit is income minus those expenses; inquiry and finished-project counts use their submission and recorded completion months.
+- **Domain reminders:** renewal reminders remain in-dashboard only; they do not send email or SMS. They are separate from public inquiry emails.
+
+## Fresh-project setup reference only
 
 For a brand-new Supabase project only:
 
-1. Run `supabase-schema.sql` in Supabase **SQL Editor**. It now includes the private expenses table as well as inquiries.
+1. Run `supabase-schema.sql` in Supabase **SQL Editor**.
 2. Create the single admin account under **Authentication → Users**; keep public sign-ups disabled.
 3. In Vercel **Settings → Environment Variables**, configure Production values for `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, and `ADMIN_EMAIL`.
-4. Keep the secret/service-role key server-side in Vercel. Never place secrets in HTML, JavaScript, GitHub, or chat. The code accepts the legacy `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` names as an alternative.
+4. Keep the Supabase secret/service-role key server-side in Vercel.
+
+Do not use this fresh-project section to reset or recreate the existing production database.
 
 ## Security and privacy notes
 
-- The browser never receives the Supabase secret/service-role key. Private dashboard API calls require a Supabase Auth session for the configured admin email.
-- Client records include names, email addresses, mobile numbers, inquiry text, and, when managed as projects, package/payment details and domain provider, renewal date, name, and email address. Expense records include descriptions, categories, amounts, dates, status, and an optional project link.
-- Payment and expense records are manual bookkeeping only; the dashboard does not process or verify payments. Never enter card/bank details, email passwords, or registrar/hosting passwords.
-- Renewal reminders and the Inbox badge are in-app only. No email or text notification integration is included.
-- Review the Privacy Policy and confirm it accurately describes the business's actual retention and practices.
+- The browser never receives Supabase or Resend secret keys. Admin API calls require a Supabase Auth session for the configured admin email.
+- The business notification email contains form details so the business can reply; the visitor acknowledgment confirms receipt and includes a reference number.
+- Inquiry data remains stored in Supabase even when email delivery fails. Check the admin Inbox as the record of truth.
+- Payment and expense records are manual bookkeeping only. Never enter card/bank details, email passwords, or registrar/hosting passwords in the form or dashboard.
+- Review the Privacy Policy to ensure it matches the business’s actual email-provider, retention, and communication practices.

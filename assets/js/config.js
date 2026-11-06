@@ -128,9 +128,10 @@ window.PWS_CONFIG = {
   },
 
   form: {
-    /* The included Python server accepts POSTs here and stores inquiries in
-       data/inquiries.jsonl. If you deploy to a static host, replace this with
-       a real form endpoint you control, or connect an email service/CRM. */
+    /* The live Vercel endpoint saves valid inquiries to Supabase. When the
+       server-side Resend settings are configured, it also emails PetersWeb
+       Solutions and sends the visitor an acknowledgment. The local JSONL
+       development server does not send transactional email. */
     endpoint: "/api/inquiries",
     minFillSeconds: 3
   }

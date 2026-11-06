@@ -6,7 +6,9 @@ A mobile-first website for PetersWeb Solutions, with package details, portfolio 
 
 The static website is hosted on Vercel. The root `server.py` is only a local development server; Vercel does not run it as a persistent server. The site includes Vercel Python functions under `api/` that save inquiry submissions to Supabase, plus a private admin dashboard at `/admin/`.
 
-The dashboard uses Supabase Auth for its single admin and keeps the Supabase secret key server-side in Vercel. Do not commit real API keys or passwords. The dashboard does not process payments.
+When the Resend environment variables are configured in Vercel, a valid inquiry also triggers a business notification and a one-time visitor acknowledgment. The inquiry is stored first; email-provider failure does not remove the Supabase record. The local JSONL development server does not send transactional emails.
+
+The dashboard uses Supabase Auth for its single admin and keeps the Supabase secret key server-side in Vercel. Resend and Supabase secret keys belong only in Vercel environment variables; do not commit them or place them in browser code or chat. The dashboard does not process payments.
 
 ## Admin dashboard
 
@@ -20,7 +22,7 @@ Domain data includes provider, renewal date, and an optional domain email addres
 
 ## Supabase setup and upgrade
 
-For a new Supabase project, run [`supabase-schema.sql`](supabase-schema.sql). For the existing production project, the first-wave migration [`supabase-admin-enhancements-migration.sql`](supabase-admin-enhancements-migration.sql) has already been run. Before deploying the second-wave expense features, run the separate [`supabase-expenses-migration.sql`](supabase-expenses-migration.sql), then upload the updated source to GitHub so Vercel can deploy it. Do not rerun the first-wave migration or fresh-project schema on the existing database. Follow [`ADMIN-SETUP-GUIDE.md`](ADMIN-SETUP-GUIDE.md) for GUI-based steps.
+For a new Supabase project, run [`supabase-schema.sql`](supabase-schema.sql). For the existing production project, both admin migrations have already been run and the second-wave dashboard is deployed; do not rerun either migration or the fresh-project schema. The inquiry-email enhancement requires no Supabase migration. Follow [`ADMIN-SETUP-GUIDE.md`](ADMIN-SETUP-GUIDE.md) for GUI-based Resend, DNS, Vercel, and deployment steps.
 
 The website form collects full name, business name/category, package interest, optional current website, email, mobile number, message, and contact consent. When an inquiry becomes a project, admins may record the agreed package and total, add-ons, scheduled/received payments, stage, domain provider/renewal date/name, optional domain email, and internal notes. Do not store passwords, payment-card/bank credentials, or other login credentials.
 

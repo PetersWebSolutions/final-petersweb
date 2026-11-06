@@ -1,10 +1,16 @@
-"""Public inquiry intake for Vercel. Stores validated inquiries in Supabase."""
+"""Public inquiry intake for Vercel. Stores validated inquiries in Supabase and, when configured, sends transactional email via Resend."""
 from __future__ import annotations
 
+import html
+import json
+import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
 from pws_backend import (
     PayloadError,
@@ -23,6 +29,11 @@ BUSINESS_TYPES = {
 PACKAGES = {"unsure", "basic", "business", "pro", "custom"}
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$")
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+RESEND_EMAILS_URL = "https://api.resend.com/emails"
+CUSTOMER_ACKNOWLEDGMENT = (
+    "Thank you for reaching out to PetersWeb Solutions! We’ve received your inquiry. "
+    "We’ll be in touch by email or phone so we can discuss how we can help."
+)
 
 
 def clean(value, limit):
@@ -69,6 +80,155 @@ def validate(payload):
         except ValueError:
             errors["currentWebsite"] = "Enter a full website address starting with https://, or leave this blank."
     return fields, errors
+
+
+def _from_address_is_valid(value):
+    """Accept either a bare address or a display-name form supported by Resend."""
+    if not value or "\r" in value or "\n" in value:
+        return False
+    match = re.search(r"<\s*([^<>]+)\s*>\s*$", value)
+    address = match.group(1).strip() if match else value.strip()
+    return bool(EMAIL_RE.fullmatch(address))
+
+
+def _send_resend_email(api_key, email_payload):
+    request = Request(
+        RESEND_EMAILS_URL,
+        data=json.dumps(email_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        headers={
+            "Authorization": "Bearer " + api_key,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            response.read(8192)
+            return 200 <= response.getcode() < 300
+    except HTTPError as exc:
+        # Do not log the response body, which can contain provider diagnostics.
+        print("Inquiry email provider returned HTTP status", exc.code, flush=True)
+    except (URLError, TimeoutError, OSError) as exc:
+        print("Inquiry email provider request failed:", type(exc).__name__, flush=True)
+    return False
+
+
+def send_inquiry_emails(fields, reference):
+    """Send the business notification and visitor acknowledgment independently."""
+    api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    notify_email = os.environ.get("INQUIRY_NOTIFY_EMAIL", "").strip()
+    from_email = os.environ.get("INQUIRY_FROM_EMAIL", "").strip()
+    if not api_key or not notify_email or not from_email:
+        print("Inquiry email delivery skipped: Resend environment variables are not fully configured.", flush=True)
+        return {"notification_sent": False, "confirmation_sent": False}
+    if not EMAIL_RE.fullmatch(notify_email) or not _from_address_is_valid(from_email):
+        print("Inquiry email delivery skipped: sender or notification address is invalid.", flush=True)
+        return {"notification_sent": False, "confirmation_sent": False}
+
+    def escaped(value):
+        return html.escape(str(value or "—"), quote=True)
+
+    message_html = escaped(fields["message"]).replace("\r\n", "\n").replace("\n", "<br>")
+    admin_html = """<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:Arial,sans-serif;color:#182235">
+<div style="max-width:640px;margin:24px auto;padding:28px;background:#fff;border:1px solid #e4e8ed;border-radius:14px">
+<p style="margin:0 0 8px;color:#9a6b1e;font-size:12px;font-weight:bold;letter-spacing:1.2px;text-transform:uppercase">PetersWeb Solutions · New inquiry</p>
+<h1 style="margin:0 0 18px;font-size:24px">A new website inquiry was submitted</h1>
+<p style="margin:0 0 8px"><strong>Reference:</strong> {reference}</p>
+<p style="margin:0 0 8px"><strong>Name:</strong> {name}</p>
+<p style="margin:0 0 8px"><strong>Business:</strong> {business}</p>
+<p style="margin:0 0 8px"><strong>Business type:</strong> {business_type}</p>
+<p style="margin:0 0 8px"><strong>Package interest:</strong> {package_interest}</p>
+<p style="margin:0 0 8px"><strong>Current website:</strong> {current_website}</p>
+<p style="margin:0 0 8px"><strong>Email:</strong> {visitor_email}</p>
+<p style="margin:0 0 8px"><strong>Mobile:</strong> {phone}</p>
+<p style="margin:18px 0 6px"><strong>Project details</strong></p>
+<p style="margin:0;line-height:1.6">{message}</p>
+<p style="margin:22px 0 0"><a href="https://peterswebsolutions.com/admin/" style="display:inline-block;padding:11px 16px;border-radius:8px;background:#101827;color:#fff;text-decoration:none;font-weight:bold">Open admin inbox</a></p>
+</div></body></html>""".format(
+        reference=escaped(reference),
+        name=escaped(fields["name"]),
+        business=escaped(fields["business"]),
+        business_type=escaped(fields["business_type"]),
+        package_interest=escaped(fields["package_interest"]),
+        current_website=escaped(fields["current_website"] or "Not provided"),
+        visitor_email=escaped(fields["email"]),
+        phone=escaped(fields["phone"]),
+        message=message_html,
+    )
+    admin_text = "\n".join([
+        "PetersWeb Solutions — New website inquiry",
+        "Reference: " + reference,
+        "Name: " + fields["name"],
+        "Business: " + fields["business"],
+        "Business type: " + fields["business_type"],
+        "Package interest: " + fields["package_interest"],
+        "Current website: " + (fields["current_website"] or "Not provided"),
+        "Email: " + fields["email"],
+        "Mobile: " + fields["phone"],
+        "",
+        "Project details:",
+        fields["message"],
+        "",
+        "Open admin inbox: https://peterswebsolutions.com/admin/",
+    ])
+
+    first_name = fields["name"].split()[0]
+    visitor_html = """<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:Arial,sans-serif;color:#182235">
+<div style="max-width:600px;margin:24px auto;padding:28px;background:#fff;border:1px solid #e4e8ed;border-radius:14px">
+<p style="margin:0 0 8px;color:#9a6b1e;font-size:12px;font-weight:bold;letter-spacing:1.2px;text-transform:uppercase">PetersWeb Solutions</p>
+<h1 style="margin:0 0 16px;font-size:23px">Thanks for reaching out, {name}!</h1>
+<p style="margin:0;line-height:1.7">{acknowledgment}</p>
+<p style="margin:18px 0 0;color:#667085;font-size:13px">Your inquiry reference: <strong>{reference}</strong></p>
+</div></body></html>""".format(
+        name=escaped(first_name),
+        acknowledgment=escaped(CUSTOMER_ACKNOWLEDGMENT),
+        reference=escaped(reference),
+    )
+    visitor_text = "\n\n".join([
+        "Thanks for reaching out, " + first_name + "!",
+        CUSTOMER_ACKNOWLEDGMENT,
+        "Your inquiry reference: " + reference,
+    ])
+
+    admin_payload = {
+        "from": from_email,
+        "to": [notify_email],
+        "reply_to": fields["email"],
+        "subject": "New website inquiry · " + reference,
+        "html": admin_html,
+        "text": admin_text,
+    }
+    visitor_payload = {
+        "from": from_email,
+        "to": [fields["email"]],
+        "reply_to": notify_email,
+        "subject": "We received your inquiry — PetersWeb Solutions",
+        "html": visitor_html,
+        "text": visitor_text,
+    }
+
+    try:
+        # Send concurrently so a valid inquiry is not held up by two sequential API calls.
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            notification = pool.submit(_send_resend_email, api_key, admin_payload)
+            confirmation = pool.submit(_send_resend_email, api_key, visitor_payload)
+            result = {
+                "notification_sent": notification.result(),
+                "confirmation_sent": confirmation.result(),
+            }
+    except Exception as exc:
+        print("Inquiry email delivery failed:", type(exc).__name__, flush=True)
+        return {"notification_sent": False, "confirmation_sent": False}
+
+    print(
+        "Inquiry email outcomes: notification={}, confirmation={}".format(
+            "accepted" if result["notification_sent"] else "failed",
+            "accepted" if result["confirmation_sent"] else "failed",
+        ),
+        flush=True,
+    )
+    return result
 
 
 class handler(BaseHTTPRequestHandler):
@@ -132,10 +292,14 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 500, {"ok": False, "error": "We couldn't save your inquiry right now. Please try again shortly."})
             return
 
+        # Keep the database record even if the email provider is missing or unavailable.
+        # The public form reports whether the visitor acknowledgment was accepted by Resend.
+        email_results = send_inquiry_emails(fields, reference)
         send_json(self, 201, {
             "ok": True,
             "reference": reference,
             "message": "Inquiry received.",
+            "confirmation_sent": email_results["confirmation_sent"],
         })
 
     def do_GET(self):
